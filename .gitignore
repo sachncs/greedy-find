@@ -1,0 +1,34 @@
+# Build artifacts
+build/
+*.air
+*.metallib
+build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Compiled object files
+*.o
+*.obj
+*.dSYM/
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local test outputs
+/tmp/
+*.log
+
+# Generated cache/checkpoint files (kept in-tree only by user choice)
+*.greedycache
+*.greedyckpt

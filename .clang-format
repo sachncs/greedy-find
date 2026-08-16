@@ -1,0 +1,20 @@
+# .clang-format — Google base with project overrides.
+# Used for .h, .m, .c files in host/. Metal files are formatted by hand.
+---
+BasedOnStyle: Google
+Language: ObjC
+ColumnLimit: 80
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReflowComments: true
+SortIncludes: true
+IncludeBlocks: Preserve
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Inline
+ObjCBlockIndentWidth: 2
+ObjCMethodIndentWidth: 2
+NamespaceIndentation: None
+AccessModifierOffset: -1
