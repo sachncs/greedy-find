@@ -79,6 +79,8 @@ message(STATUS "xcrun:          ${XCRUN_TOOL}")
 set(METAL_SRC
   "${CMAKE_SOURCE_DIR}/metal/secp256k1.metal"
   "${CMAKE_SOURCE_DIR}/metal/ecdsa.metal"
+  "${CMAKE_SOURCE_DIR}/metal/sweep.metal"
+  "${CMAKE_SOURCE_DIR}/metal/sweep_pubkey.metal"
 )
 
 set(METAL_LIB "${CMAKE_BINARY_DIR}/greedy.metallib")
