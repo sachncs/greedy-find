@@ -73,33 +73,37 @@ message(STATUS "xcrun:          ${XCRUN_TOOL}")
 # ----------------------------------------------------------------------------
 # Metal library
 # ----------------------------------------------------------------------------
-file(GLOB METAL_SRC "${CMAKE_SOURCE_DIR}/metal/*.metal")
-
-set(METAL_AIR "${CMAKE_BINARY_DIR}/greedy.air")
-set(METAL_LIB "${CMAKE_BINARY_DIR}/greedy.metallib")
-
-# Generate a `-std=metal3.0` command-line; allow opt-level override.
-# `-c` is required so metal emits LLVM bitcode rather than a MetalLib
-# executable; metallib only accepts bitcode input.
-set(METAL_FLAGS "-c" "-std=metal3.0" "-O3")
-# We allow warnings but do NOT treat them as errors during metallib — Metal
-# compilers occasionally emit cosmetic warnings that don't affect runtime.
-
-add_custom_command(
-  OUTPUT "${METAL_AIR}"
-  COMMAND ${METAL_TOOL} ${METAL_FLAGS}
-          -I "${CMAKE_SOURCE_DIR}/metal"
-          -o "${METAL_AIR}"
-          ${METAL_SRC}
-  DEPENDS ${METAL_SRC}
-  COMMENT "Compiling Metal sources to AIR"
-  VERBATIM
+# Compile each .metal file to its own .air, then link with metallib.
+# Metal's compiler takes one input per `-o` invocation; passing multiple
+# files fails with "cannot specify -o when generating multiple output files".
+set(METAL_SRC
+  "${CMAKE_SOURCE_DIR}/metal/secp256k1.metal"
+  "${CMAKE_SOURCE_DIR}/metal/ecdsa.metal"
 )
+
+set(METAL_LIB "${CMAKE_BINARY_DIR}/greedy.metallib")
+set(METAL_AIR_FILES "")
+
+foreach(_metal_src ${METAL_SRC})
+  get_filename_component(_metal_name "${_metal_src}" NAME_WE)
+  set(_air_out "${CMAKE_BINARY_DIR}/${_metal_name}.air")
+  list(APPEND METAL_AIR_FILES "${_air_out}")
+  add_custom_command(
+    OUTPUT "${_air_out}"
+    COMMAND ${METAL_TOOL} -c -std=metal3.0 -O3
+            -I "${CMAKE_SOURCE_DIR}/metal"
+            -o "${_air_out}"
+            "${_metal_src}"
+    DEPENDS "${_metal_src}"
+    COMMENT "Compiling ${_metal_name}.metal to AIR"
+    VERBATIM
+  )
+endforeach()
 
 add_custom_command(
   OUTPUT "${METAL_LIB}"
-  COMMAND ${METALLIB_TOOL} "${METAL_AIR}" -o "${METAL_LIB}"
-  DEPENDS "${METAL_AIR}"
+  COMMAND ${METALLIB_TOOL} ${METAL_AIR_FILES} -o "${METAL_LIB}"
+  DEPENDS ${METAL_AIR_FILES}
   COMMENT "Linking Metal AIR to metallib"
   VERBATIM
 )
@@ -118,6 +122,8 @@ add_executable(greedyfind ${HOST_SRC})
 
 target_include_directories(greedyfind PRIVATE
   "${CMAKE_SOURCE_DIR}/host"
+  /tmp/secp256k1-install/include
+  /opt/homebrew/include
 )
 
 target_compile_options(greedyfind PRIVATE ${GRD_WARN_FLAGS})
@@ -126,9 +132,16 @@ target_compile_options(greedyfind PRIVATE ${GRD_WARN_FLAGS})
 find_library(METAL_FRAMEWORK Metal REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 
+target_link_directories(greedyfind PRIVATE
+  /tmp/secp256k1-install/lib
+  /opt/homebrew/lib
+)
+
 target_link_libraries(greedyfind PRIVATE
   ${FOUNDATION_FRAMEWORK}
   ${METAL_FRAMEWORK}
+  secp256k1
+  tomcrypt
 )
 
 # Embed the metallib via rpath so the executable can find it next to itself.
@@ -147,12 +160,13 @@ option(GRD_BUILD_TESTS "Build unit and KAT tests" ON)
 if(GRD_BUILD_TESTS)
   enable_testing()
 
-  file(GLOB KAT_SRC "${CMAKE_SOURCE_DIR}/tests/kat/*.c")
+file(GLOB KAT_SRC "${CMAKE_SOURCE_DIR}/tests/kat/*.c")
   foreach(KAT_FILE ${KAT_SRC})
     get_filename_component(KAT_NAME "${KAT_FILE}" NAME_WE)
-    # KATs need the host-side helpers from host/ecc.c (and friends).
+    # KATs need the host-side helpers from host/ecc.c and friends.
     add_executable("${KAT_NAME}" "${KAT_FILE}"
-      "${CMAKE_SOURCE_DIR}/host/ecc.c")
+      "${CMAKE_SOURCE_DIR}/host/ecc.c"
+      "${CMAKE_SOURCE_DIR}/host/hash.c")
     target_include_directories("${KAT_NAME}" PRIVATE
       "${CMAKE_SOURCE_DIR}/host"
       "${CMAKE_SOURCE_DIR}/tests"
@@ -166,6 +180,22 @@ if(GRD_BUILD_TESTS)
       )
     endif()
     target_compile_options("${KAT_NAME}" PRIVATE ${GRD_WARN_FLAGS})
+    # Link against the third-party crypto libraries we use for the
+    # host reference. secp256k1 lives under /tmp/secp256k1-install
+    # (built from bitcoin-core/secp256k1). libtomcrypt comes from
+    # Homebrew. Override via environment if installed elsewhere.
+    target_include_directories("${KAT_NAME}" PRIVATE
+      /tmp/secp256k1-install/include
+      /opt/homebrew/include
+    )
+    target_link_directories("${KAT_NAME}" PRIVATE
+      /tmp/secp256k1-install/lib
+      /opt/homebrew/lib
+    )
+    target_link_libraries("${KAT_NAME}" PRIVATE
+      secp256k1
+      tomcrypt
+    )
     add_test(NAME "kat_${KAT_NAME}" COMMAND "${KAT_NAME}")
   endforeach()
 
