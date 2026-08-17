@@ -56,6 +56,8 @@ size_t GRDU128FormatDecimal(char *buf, size_t buf_len, GRDUInt128 a);
 
 GRDUInt256x64 GRDFieldAddHost(GRDUInt256x64 a, GRDUInt256x64 b);
 GRDUInt256x64 GRDFieldSubHost(GRDUInt256x64 a, GRDUInt256x64 b);
+GRDUInt256x64 GRDFieldMulHost(GRDUInt256x64 a, GRDUInt256x64 b);
+GRDUInt256x64 GRDFieldSqrHost(GRDUInt256x64 a);
 
 bool GRDEq(GRDUInt256x64 a, GRDUInt256x64 b);
 bool GRDIsZero(GRDUInt256x64 a);

@@ -110,6 +110,34 @@ static void test_u128_parse(void) {
   }
 }
 
+static void test_mul_sqr(void) {
+  GRDUInt256x64 zero = make_u256(0, 0, 0, 0);
+  GRDUInt256x64 one = make_u256(1, 0, 0, 0);
+  GRDUInt256x64 two = make_u256(2, 0, 0, 0);
+  GRDUInt256x64 pm1 = p_minus_one();
+
+  // 0 * x == 0
+  GRD_KAT_ASSERT_EQ("mul(0, 1)", GRDFieldMulHost(zero, one), zero);
+  GRD_KAT_ASSERT_EQ("mul(1, 0)", GRDFieldMulHost(one, zero), zero);
+  // 1 * 1 == 1
+  GRD_KAT_ASSERT_EQ("mul(1, 1)", GRDFieldMulHost(one, one), one);
+  // 2 * 2 == 4
+  GRD_KAT_ASSERT_EQ("mul(2, 2)", GRDFieldMulHost(two, two),
+                    make_u256(4, 0, 0, 0));
+  // 2 * (p-1) == -2 mod p == p-2
+  GRD_KAT_ASSERT_EQ("mul(2, p-1)", GRDFieldMulHost(two, pm1),
+                    make_u256(0xFFFFFFFEFFFFFC2Dull, 0xFFFFFFFFFFFFFFFFull,
+                              0xFFFFFFFFFFFFFFFFull, 0xFFFFFFFFFFFFFFFFull));
+  // (p-1) * (p-1) == 1 (since -1 * -1 == 1)
+  GRD_KAT_ASSERT_EQ("mul(p-1, p-1)", GRDFieldMulHost(pm1, pm1), one);
+  // sqr(2) == 4
+  GRD_KAT_ASSERT_EQ("sqr(2)", GRDFieldSqrHost(two), make_u256(4, 0, 0, 0));
+  // sqr(0) == 0
+  GRD_KAT_ASSERT_EQ("sqr(0)", GRDFieldSqrHost(zero), zero);
+  // sqr(p-1) == 1
+  GRD_KAT_ASSERT_EQ("sqr(p-1)", GRDFieldSqrHost(pm1), one);
+}
+
 static void test_u128_arith(void) {
   GRDUInt128 a = {.lo = 0xFFFFFFFFFFFFFFFFull, .hi = 1ull};
   GRDUInt128 b = {.lo = 1, .hi = 0};
@@ -127,6 +155,7 @@ static void test_u128_arith(void) {
 int main(void) {
   test_zero();
   test_p_boundary();
+  test_mul_sqr();
   test_u128_parse();
   test_u128_arith();
 
