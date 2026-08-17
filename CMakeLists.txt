@@ -173,6 +173,7 @@ file(GLOB KAT_SRC
       "${CMAKE_SOURCE_DIR}/host/ecc.c"
       "${CMAKE_SOURCE_DIR}/host/hash.c"
       "${CMAKE_SOURCE_DIR}/host/pubkey.m"
+      "${CMAKE_SOURCE_DIR}/host/address.m"
       "${CMAKE_SOURCE_DIR}/host/sweep.m")
     target_include_directories("${KAT_NAME}" PRIVATE
       "${CMAKE_SOURCE_DIR}/host"

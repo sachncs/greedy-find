@@ -331,9 +331,14 @@ static secp256k1_context *grd_ctx(void) {
 }
 
 static void limbs_to_be32(uint8_t out[32], GRDUInt256x64 v) {
+  // GRDUInt256x64 stores the value in little-endian 64-bit limbs
+  // (v.limbs[0] is the LSB). To produce 32 bytes of big-endian
+  // output, write each limb's bytes MSB-first, limbs[3] first.
   for (int i = 0; i < 4; ++i) {
     uint64_t limb = v.limbs[3 - i];
-    for (int j = 8; j-- > 0;) out[i * 8 + j] = (uint8_t)(limb >> (j * 8));
+    for (int j = 0; j < 8; ++j) {
+      out[i * 8 + j] = (uint8_t)(limb >> ((7 - j) * 8));
+    }
   }
 }
 
