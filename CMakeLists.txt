@@ -181,6 +181,8 @@ file(GLOB KAT_SRC
       list(APPEND _kat_extra "${CMAKE_SOURCE_DIR}/host/checkpoint.m")
     elseif("${KAT_NAME}" STREQUAL "telemetry_kat")
       list(APPEND _kat_extra "${CMAKE_SOURCE_DIR}/host/telemetry.m")
+    elseif("${KAT_NAME}" STREQUAL "load_balance_kat")
+      list(APPEND _kat_extra "${CMAKE_SOURCE_DIR}/host/load_balance.m")
     endif()
     add_executable("${KAT_NAME}" "${KAT_FILE}"
       "${CMAKE_SOURCE_DIR}/host/ecc.c"
