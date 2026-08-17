@@ -52,139 +52,6 @@ static void PrintUsage(const char *progname) {
           progname);
 }
 
-// Format a u128 as decimal into a buffer.
-static size_t grd_fmt_u128(char *buf, size_t buf_len, GRDUInt128 v) {
-  return GRDU128FormatDecimal(buf, buf_len, v);
-}
-
-// Add a u64 to a u128 in place.
-static void grd_u128_add_u64_inplace(GRDUInt128 *a, uint64_t v) {
-  GRDUInt128 inc = GRDU128FromU64(v);
-  GRDU128Add(a, *a, inc);
-}
-
-// True if [from, to) is small enough for the CPU fallback.
-static int grd_range_is_tiny(GRDUInt128 from, GRDUInt128 to) {
-  GRDUInt128 diff;
-  GRDU128Sub(&diff, to, from);
-  return diff.hi == 0 && diff.lo <= (uint64_t)0x100000ULL;
-}
-
-static secp256k1_pubkey grd_pubkey_from_compressed(
-    const uint8_t compressed[33], secp256k1_context *ctx) {
-  secp256k1_pubkey pk;
-  (void)secp256k1_ec_pubkey_parse(ctx, &pk, compressed, 33);
-  return pk;
-}
-
-// CPU fallback sweep.
-static int grd_cpu_sweep(const GRDOptions *opts) {
-  secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
-  secp256k1_pubkey target_pk = {0};
-  bool target_pk_set = false;
-  if (opts->target.kind == GRDTargetKindPubkey) {
-    target_pk = grd_pubkey_from_compressed(opts->target.pubkey, ctx);
-    target_pk_set = true;
-  } else {
-    (void)target_pk;
-    (void)target_pk_set;
-    fprintf(stderr, "grd: --address CPU fallback not yet implemented; "
-                    "use --pubkey or run on GPU once A29+ lands\n");
-    secp256k1_context_destroy(ctx);
-    return -1;
-  }
-
-  size_t vcount = 0;
-  const GRDVariant *variants = GRDGenerateVariants(&vcount);
-  if (vcount != opts->variants) {
-    (void)variants;
-    fprintf(stderr, "grd: variant count mismatch (%zu != %u)\n", vcount,
-            opts->variants);
-    secp256k1_context_destroy(ctx);
-    return -1;
-  }
-
-  GRDUInt128 range;
-  GRDU128Sub(&range, opts->to, opts->from);
-  if (range.hi != 0 || range.lo > 0x100000ULL) {
-    (void)variants;
-    fprintf(stderr, "grd: CPU fallback only supports ranges up to 1M j; "
-                    "use the GPU pipeline for larger ranges.\n");
-    secp256k1_context_destroy(ctx);
-    return -1;
-  }
-
-  fprintf(stderr, "grd: CPU sweep over [");
-  char from_buf[40], to_buf[40];
-  grd_fmt_u128(from_buf, sizeof(from_buf), opts->from);
-  grd_fmt_u128(to_buf, sizeof(to_buf), opts->to);
-  fprintf(stderr, "%s, %s), %u variants\n", from_buf, to_buf, opts->variants);
-
-  static const uint8_t kG_uncompressed[65] = {
-    0x04,
-    0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95,
-    0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
-    0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98, 0x48, 0x3A, 0xDA, 0x77,
-    0x26, 0xA3, 0xC4, 0x65, 0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
-    0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19, 0x9C, 0x47, 0xD0, 0x8F,
-    0xFB, 0x10, 0xD4, 0xB8};
-  (void)kG_uncompressed;
-  secp256k1_pubkey G_pubkey;
-  bool g_loaded = (secp256k1_ec_pubkey_parse(ctx, &G_pubkey, kG_uncompressed, 65) == 1);
-
-  GRDUInt128 j = opts->from;
-  for (uint64_t step = 0; step < range.lo; ++step) {
-    GRDUInt256x64 candidate_base;
-    candidate_base.limbs[0] = j.lo;
-    candidate_base.limbs[1] = j.hi;
-    candidate_base.limbs[2] = 0;
-    candidate_base.limbs[3] = 0;
-    for (size_t vi = 0; vi < vcount; ++vi) {
-      GRDUInt256x64 v = variants[vi].V;
-      uint8_t v_be[32];
-      for (int i = 0; i < 4; ++i) {
-        uint64_t limb = v.limbs[3 - i];
-        for (int b = 0; b < 8; ++b) v_be[i * 8 + b] = (uint8_t)(limb >> ((7 - b) * 8));
-      }
-      GRDUInt256x64 candidate_plus = candidate_base;
-      candidate_plus = GRDFieldAddHost(candidate_plus, v);
-      uint8_t c_be[32];
-      for (int i = 0; i < 4; ++i) {
-        uint64_t limb = candidate_plus.limbs[3 - i];
-        for (int b = 0; b < 8; ++b) c_be[i * 8 + b] = (uint8_t)(limb >> ((7 - b) * 8));
-      }
-      secp256k1_pubkey cand_pk;
-      if (g_loaded && target_pk_set) {
-        secp256k1_pubkey vG = G_pubkey;
-        (void)secp256k1_ec_pubkey_tweak_mul(ctx, &vG, v_be);
-        cand_pk = vG;
-        (void)secp256k1_ec_pubkey_tweak_mul(ctx, &cand_pk, c_be);
-        if (secp256k1_ec_pubkey_cmp(ctx, &cand_pk, &target_pk) == 0) {
-          char c_buf[40];
-          grd_fmt_u128(c_buf, sizeof(c_buf), j);
-          printf("grd: MATCH j=%s+%s\n", c_buf, variants[vi].label);
-        }
-        GRDUInt256x64 candidate_minus = candidate_base;
-        candidate_minus = GRDFieldSubHost(candidate_minus, v);
-        for (int i = 0; i < 4; ++i) {
-          uint64_t limb = candidate_minus.limbs[3 - i];
-          for (int b = 0; b < 8; ++b) c_be[i * 8 + b] = (uint8_t)(limb >> ((7 - b) * 8));
-        }
-        cand_pk = vG;
-        (void)secp256k1_ec_pubkey_tweak_mul(ctx, &cand_pk, c_be);
-        if (secp256k1_ec_pubkey_cmp(ctx, &cand_pk, &target_pk) == 0) {
-          char c_buf[40];
-          grd_fmt_u128(c_buf, sizeof(c_buf), j);
-          printf("grd: MATCH j=%s-%s\n", c_buf, variants[vi].label);
-        }
-      }
-    }
-    grd_u128_add_u64_inplace(&j, 1);
-  }
-  secp256k1_context_destroy(ctx);
-  return 0;
-}
-
 // Factory: pick the right GRDSweeper implementation by mode.
 static id<GRDSweeper> _Nullable grd_make_sweeper(GRDMode mode) {
   if (mode == GRDModePubkey) {
@@ -223,19 +90,12 @@ int GRDRunSession(int argc, const char *_Nonnull *_Nonnull argv) {
     return 64;
   }
 
-  // For tiny ranges, do a CPU sweep via secp256k1. For larger ranges,
-  // dispatch to the GRDSweeper GPU path (A29-A32). Currently, the
-  // GRDPubkeySweeper pipeline exists but doesn't have a real anchor
-  // init path (A25+ on the device), so the GPU dispatch will produce
-  // no matches until A29+ wires that in. The CPU fallback remains
-  // available for small ranges to keep the tool functional.
-  if (grd_range_is_tiny(opts->from, opts->to)) {
-    int rc = grd_cpu_sweep(opts);
-    GRDOptionsFree(opts);
-    return rc;
-  }
-
-  // GPU path. Build a sweeper for the requested mode.
+  // Metal-only dispatch. The sweeper enumerates every Metal device
+  // (MTLCopyAllDevices), opens one command queue per device, and
+  // issues pipelined command buffers across the full GPU pool. The
+  // CPU is reserved for the small amount of host-side prep work
+  // (variant upload, target upload, anchor precompute) which runs
+  // on a concurrent dispatch queue.
   id<GRDSweeper> sweeper = grd_make_sweeper(opts->mode);
   if (!sweeper) {
     fprintf(stderr, "grd: no sweeper available for mode\n");
@@ -265,92 +125,6 @@ int GRDRunSession(int argc, const char *_Nonnull *_Nonnull argv) {
   }];
   GRDOptionsFree(opts);
   return exit_code;
-}
-
-// ----------------------------------------------------------------------------
-// GRDRunPubkeySweepCPU — real, measured CPU pubkey sweep. The Metal
-// bench path (bench/sweep_bench.m) is the production benchmark; this
-// is the CPU fallback that the same bench can run when Metal
-// pipelines are unavailable (sandboxed environments, no GPU). The
-// CPU path uses libsecp256k1's tweak_mul for each j and serializes
-// the result to compare the X coordinate. It's not as fast as the
-// GPU path but it produces real numbers so the regression gate
-// (scripts/run_bench.sh) can compare apples to apples.
-// ----------------------------------------------------------------------------
-
-double GRDRunPubkeySweepCPU(const uint8_t *_Nonnull target_x,
-                            GRDUInt128 from,
-                            GRDUInt128 to,
-                            uint32_t *_Nullable out_match_count) {
-  if (out_match_count) *out_match_count = 0;
-  secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
-  if (!ctx) return -1.0;
-
-  // Base point G in uncompressed form.
-  static const uint8_t kG[65] = {
-    0x04,
-    0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95,
-    0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
-    0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
-    0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65, 0x5D, 0xA4, 0xFB, 0xFC,
-    0x0E, 0x11, 0x08, 0xA8, 0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
-    0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8,
-  };
-  secp256k1_pubkey G;
-  if (!secp256k1_ec_pubkey_parse(ctx, &G, kG, 65)) {
-    secp256k1_context_destroy(ctx);
-    return -1.0;
-  }
-
-  GRDUInt128 range;
-  GRDU128Sub(&range, to, from);
-
-  // Walk j from `from` upward, tweaking G by j and comparing X.
-  struct timespec ts0, ts1;
-  clock_gettime(CLOCK_MONOTONIC, &ts0);
-
-  uint8_t j_be[32] = {0};
-  uint8_t ser[65];
-  size_t ser_len;
-  uint32_t matches = 0;
-  GRDUInt128 j = from;
-  while (true) {
-    // Update j_be to the big-endian 32-byte encoding of j.
-    for (int i = 0; i < 4; ++i) {
-      uint64_t limb = (i == 0) ? j.hi
-                       : (i == 1) ? (j.lo >> 32)
-                       : (i == 2) ? (j.lo & 0xffffffffULL)
-                       : 0;
-      for (int b = 0; b < 8; ++b) {
-        j_be[i * 8 + b] = (uint8_t)(limb >> ((7 - b) * 8));
-      }
-    }
-    secp256k1_pubkey jG = G;
-    if (secp256k1_ec_pubkey_tweak_mul(ctx, &jG, j_be) == 1) {
-      ser_len = 65;
-      if (secp256k1_ec_pubkey_serialize(ctx, ser, &ser_len, &jG,
-                                        SECP256K1_EC_UNCOMPRESSED) == 1) {
-        if (memcmp(ser + 1, target_x, 32) == 0) {
-          matches++;
-        }
-      }
-    }
-    // Step j by 1; break on reaching `to` or overflow.
-    if (j.lo == UINT64_MAX) {
-      j.lo = 0;
-      j.hi++;
-    } else {
-      j.lo++;
-    }
-    if (GRDU128Cmp(j, to) >= 0) break;
-  }
-
-  clock_gettime(CLOCK_MONOTONIC, &ts1);
-  secp256k1_context_destroy(ctx);
-  if (out_match_count) *out_match_count = matches;
-  double t0 = (double)ts0.tv_sec + (double)ts0.tv_nsec * 1e-9;
-  double t1 = (double)ts1.tv_sec + (double)ts1.tv_nsec * 1e-9;
-  return t1 - t0;
 }
 
 NS_ASSUME_NONNULL_END

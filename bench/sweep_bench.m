@@ -26,7 +26,6 @@
 #import "config.h"
 #import "ecc.h"
 #import "pubkey.h"
-#import "sweep.h"
 
 // ----------------------------------------------------------------------------
 // Configuration knobs (per-axis candidates).
@@ -304,41 +303,16 @@ int main(int argc, const char* argv[]) {
   printf("  %-16s %12.0f %16.0f %10.4f\n\n", "default", def.j_per_sec,
          def.ec_adds_per_sec, def.wall_seconds);
 
-  // CPU fallback pass: a real, measured throughput over the same
-  // range using libsecp256k1. This is the path the regression gate
-  // uses when the Metal runtime is unavailable (sandboxed
-  // environments). It's slower than the GPU path but produces
-  // real numbers so scripts/run_bench.sh can compare apples to
-  // apples.
-  printf("== cpu fallback (libsecp256k1) ==\n");
-  static const uint8_t kGxBench[32] = {
-    0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95,
-    0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
-    0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
-  };
-  GRDUInt128 cpu_from = {.lo = 0, .hi = 0};
-  GRDUInt128 cpu_to = {.lo = kAutotuneRange, .hi = 0};
-  uint32_t cpu_matches = 0;
-  double cpu_wall = GRDRunPubkeySweepCPU(kGxBench, cpu_from, cpu_to,
-                                          &cpu_matches);
-  double cpu_jps = 0.0;
-  if (cpu_wall > 0) {
-    cpu_jps = (double)kAutotuneRange / cpu_wall;
-  }
-  printf("  %-16s %12.0f %16s %10.4f (matches=%u)\n\n",
-         "cpu", cpu_jps, "-", cpu_wall, cpu_matches);
-
-  // JSON one-liner for downstream regression gates (A47). The
-  // `mode` field is "metal" or "cpu"; the regression gate accepts
-  // either, separately baselined.
-  const char *mode = (def.j_per_sec > 0) ? "metal" : "cpu";
-  double jps = (mode[0] == 'm') ? def.j_per_sec : cpu_jps;
-  double wall = (mode[0] == 'm') ? def.wall_seconds : cpu_wall;
-  printf("{\"bench\":\"sweep_bench\",\"mode\":\"%s\",\"tg\":%u,"
+  // Metal-only: the regression gate fires on the Metal path.
+  // If j_per_sec is 0, Metal could not create a pipeline in this
+  // environment (XPC_ERROR_CONNECTION_INTERRUPTED); the run is
+  // recorded as a regression because the gate cannot validate.
+  printf("{\"bench\":\"sweep_bench\",\"mode\":\"metal\",\"tg\":%u,"
          "\"anchor_k\":%u,\"variants\":%u,\"range\":%llu,"
          "\"j_per_sec\":%.0f,\"wall_s\":%.6f}\n",
-         mode, kDefaultTg, kDefaultAnchorK, kDefaultVariants,
-         (unsigned long long)kAutotuneRange, jps, wall);
+         kDefaultTg, kDefaultAnchorK, kDefaultVariants,
+         (unsigned long long)kAutotuneRange, def.j_per_sec,
+         def.wall_seconds);
 
   return 0;
 }
