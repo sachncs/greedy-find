@@ -83,6 +83,7 @@ set(METAL_SRC
   "${CMAKE_SOURCE_DIR}/metal/sweep.metal"
   "${CMAKE_SOURCE_DIR}/metal/sweep_pubkey.metal"
   "${CMAKE_SOURCE_DIR}/metal/sweep_pubkey_local.metal"
+  "${CMAKE_SOURCE_DIR}/metal/prefix_index.metal"
 )
 
 set(METAL_LIB "${CMAKE_BINARY_DIR}/greedy.metallib")
