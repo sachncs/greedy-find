@@ -1,0 +1,14 @@
+{
+  "machine": "M3 Pro (12-core CPU, 18-core GPU)",
+  "metal_toolchain": "metal3.0",
+  "date": "2026-08-17",
+  "note": "Initial baseline; replace via scripts/record_baseline.sh. j_per_sec is the default-pass measurement from bench/sweep_bench.m at threadgroup=32, anchor_k=16, variants=512, range=2^14.",
+  "bench": "sweep_bench",
+  "tg": 32,
+  "anchor_k": 16,
+  "variants": 512,
+  "range": 16384,
+  "j_per_sec": 0,
+  "ec_adds_per_sec": 0,
+  "wall_s": 0.0
+}
