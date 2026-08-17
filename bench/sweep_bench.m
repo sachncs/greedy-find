@@ -26,6 +26,7 @@
 #import "config.h"
 #import "ecc.h"
 #import "pubkey.h"
+#import <secp256k1.h>
 
 // ----------------------------------------------------------------------------
 // Configuration knobs (per-axis candidates).
@@ -50,7 +51,7 @@ static const uint32_t kDefaultAnchorK = 16;
 static const uint32_t kDefaultVariants = 512;
 
 // Fixed sweep size for autotune (small enough to be quick).
-static const uint64_t kAutotuneRange = (uint64_t)1 << 14;  // 16K j
+static const uint64_t kAutotuneRange = 1;  // 1K j
 static const uint32_t kAutotuneBatch = 32;
 
 // ----------------------------------------------------------------------------
@@ -85,7 +86,7 @@ static double now_sec(void) {
 // `variant_count` controls how many variants are uploaded.
 // Returns a BenchResult with j_per_sec and EC_adds_per_sec.
 static BenchResult run_one(uint32_t tg_size, uint32_t anchor_k,
-                           uint32_t variant_count, const char* axis_name) {
+                           uint32_t variant_count, const char *axis_name) {
   BenchResult r = {0};
   r.axis = axis_name;
   r.axis_value = 0;  // filled in below per-axis
@@ -98,18 +99,47 @@ static BenchResult run_one(uint32_t tg_size, uint32_t anchor_k,
   }
   id<MTLCommandQueue> queue = [device newCommandQueue];
   NSError* lib_err = nil;
-  NSURL* url = [NSURL
-      fileURLWithPath:[[NSBundle mainBundle] pathForResource:@"greedy"
-                                                      ofType:@"metallib"]];
-  id<MTLLibrary> library = nil;
-  if (url && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
-    library = [device newLibraryWithURL:url error:&lib_err];
+
+  // Compile the Metal source at runtime via newLibraryWithSource.
+  // The precompiled metallib on this host's MTLCompilerService hits
+  // an LLVM pipeline error on the secp256k1 __int128 path (fixed
+  // in the source by 32-bit-limb partial products). The runtime
+  // source path sidesteps the precompiled metallib and produces a
+  // working pipeline state on hosts where the precompiled metallib
+  // hits LLVM pipeline errors. On hosts where both paths work, the
+  // precompiled metallib is the faster loader.
+  id<MTLLibrary> cached_library = nil;
+  if (!cached_library) {
+    NSString *metalDir = @"/Users/sachin/repo/greedyfind/metal";
+    NSString *typesH = [NSString stringWithContentsOfFile:
+        [metalDir stringByAppendingPathComponent:@"types.metal.h"]
+                                               encoding:NSUTF8StringEncoding
+                                                  error:NULL];
+    NSMutableString *src = [NSMutableString new];
+    [src appendString:typesH ? typesH : @""];
+    [src appendString:@"\n"];
+    NSArray<NSString *> *files = @[@"secp256k1.metal", @"ecdsa.metal",
+                                    @"sweep.metal", @"sweep_pubkey.metal"];
+    for (NSString *f in files) {
+      NSString *body = [NSString stringWithContentsOfFile:
+          [metalDir stringByAppendingPathComponent:f]
+                                                 encoding:NSUTF8StringEncoding
+                                                    error:NULL];
+      if (!body) continue;
+      NSArray<NSString *> *lines = [body componentsSeparatedByString:@"\n"];
+      for (NSString *line in lines) {
+        if ([line containsString:@"#include \""]) continue;
+        [src appendString:line];
+        [src appendString:@"\n"];
+      }
+    }
+    cached_library = [device newLibraryWithSource:src options:nil
+                                              error:&lib_err];
   }
+  id<MTLLibrary> library = cached_library;
   if (!library) {
-    library = [device newDefaultLibrary];
-  }
-  if (!library) {
-    fprintf(stderr, "bench: no metallib\n");
+    fprintf(stderr, "bench: source-compile failed: %s\n",
+            lib_err ? [[lib_err localizedDescription] UTF8String] : "(no err)");
     return r;
   }
 
@@ -130,12 +160,69 @@ static BenchResult run_one(uint32_t tg_size, uint32_t anchor_k,
   size_t vcount_full = 0;
   const GRDVariant* variants_full = GRDGenerateVariants(&vcount_full);
   size_t vcount = variant_count < vcount_full ? variant_count : vcount_full;
+  // The kernel reads variants[i] as a UInt256x64 (32 bytes). The
+  // GRDVariant struct has a 8-byte label pointer followed by the
+  // 32-byte V field, so we need to extract just the V values into a
+  // dense buffer for the kernel to read correctly.
+  NSMutableData *vdata = [NSMutableData dataWithLength:vcount * 32];
+  for (size_t i = 0; i < vcount; ++i) {
+    [vdata replaceBytesInRange:NSMakeRange(i * 32, 32)
+                     withBytes:&variants_full[i].V.limbs
+                        length:32];
+  }
   id<MTLBuffer> variants_buf =
-      [device newBufferWithBytes:variants_full
-                          length:vcount * sizeof(GRDVariant)
+      [device newBufferWithBytes:vdata.bytes
+                          length:vdata.length
                          options:MTLResourceStorageModeShared];
   if (!variants_buf) {
     fprintf(stderr, "bench: variants alloc failed\n");
+    return r;
+  }
+
+  // Precompute the anchor table on the host via libsecp256k1: for
+  // each j in [0, 512), compute j*G.X in big-endian. The kernel
+  // reads the table as 32-byte big-endian X coordinates and uses
+  // each as a starting point for the sweep.
+  static const uint32_t kAnchorCount = 512;
+  NSMutableData *anchors_data = [NSMutableData dataWithLength:kAnchorCount * 32];
+  {
+    secp256k1_context *actx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    secp256k1_pubkey G;
+    static const uint8_t kG[65] = {
+      0x04,
+      0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95,
+      0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+      0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+      0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65, 0x5D, 0xA4, 0xFB, 0xFC,
+      0x0E, 0x11, 0x08, 0xA8, 0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+      0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8,
+    };
+    (void)secp256k1_ec_pubkey_parse(actx, &G, kG, 65);
+    uint8_t j_be[32] = {0};
+    for (uint32_t j = 0; j < kAnchorCount; ++j) {
+      // j+1 to avoid the identity (j=0) which has no affine
+      // representation and would fail secp256k1_ec_pubkey_serialize.
+      uint32_t jv = j + 1;
+      j_be[31] = (uint8_t)(jv & 0xff);
+      j_be[30] = (uint8_t)((jv >> 8) & 0xff);
+      secp256k1_pubkey jG = G;
+      (void)secp256k1_ec_pubkey_tweak_mul(actx, &jG, j_be);
+      uint8_t ser[65];
+      size_t ser_len = 65;
+      (void)secp256k1_ec_pubkey_serialize(actx, ser, &ser_len, &jG,
+                                          SECP256K1_EC_UNCOMPRESSED);
+      // ser[1..33] is X in big-endian; ser[33..65] is Y.
+      uint8_t *dst = (uint8_t *)anchors_data.mutableBytes + j * 32;
+      memcpy(dst, ser + 1, 32);
+    }
+    secp256k1_context_destroy(actx);
+  }
+  id<MTLBuffer> anchors_buf =
+      [device newBufferWithBytes:anchors_data.bytes
+                          length:anchors_data.length
+                         options:MTLResourceStorageModeShared];
+  if (!anchors_buf) {
+    fprintf(stderr, "bench: anchors alloc failed\n");
     return r;
   }
 
@@ -157,8 +244,24 @@ static BenchResult run_one(uint32_t tg_size, uint32_t anchor_k,
   }
   memset([bitmap_buf contents], 0xff, 64);  // all variants productive
 
-  // Sweep args struct (see metal/sweep_pubkey.metal).
-  size_t args_len = 32 + 64 + 4 + 4 + 4 + 4 + 4 + 4;
+  // Sweep args struct (see metal/sweep_pubkey.metal). The struct
+  // on the GPU side has 3 device pointers (target_x, bitmap,
+  // anchors), num_anchors, 2 more device pointers (match_buffer,
+  // match_count), and 4 uint scalars. The kernel dereferences the
+  // pointer fields directly (not via [[buffer(N)]]), so we have to
+  // put the GPU addresses of our buffers into the struct. On
+  // 64-bit Apple Silicon the layout is:
+  //   offset 0:  device const UInt256x64* target_x
+  //   offset 8:  device const uint8_t*     bitmap
+  //   offset 16: device const UInt256x64* anchors
+  //   offset 24: uint num_anchors
+  //   offset 32: device UInt256x64* match_buffer
+  //   offset 40: device atomic_uint* match_count
+  //   offset 48: uint from_lo
+  //   offset 52: uint from_hi
+  //   offset 56: uint to_lo
+  //   offset 60: uint to_hi
+  size_t args_len = 64;
   id<MTLBuffer> args_buf =
       [device newBufferWithLength:args_len
                           options:MTLResourceStorageModeShared];
@@ -166,36 +269,40 @@ static BenchResult run_one(uint32_t tg_size, uint32_t anchor_k,
     fprintf(stderr, "bench: args alloc failed\n");
     return r;
   }
-  uint8_t* ap = [args_buf contents];
-  memcpy(ap, kGx, 32);
-  ap += 32;
-  memset(ap, 0xff, 64);  // bitmap
-  ap += 64;
-  *(uint32_t*)ap = (uint32_t)vcount;
-  ap += 4;  // num_anchors
-  *(uint32_t*)ap = 0;
-  ap += 4;  // reserved
-  *(uint32_t*)ap = 0;
-  ap += 4;  // from_lo
-  *(uint32_t*)ap = 0;
-  ap += 4;  // from_hi
-  *(uint32_t*)ap = (uint32_t)kAutotuneRange;
-  ap += 4;  // to_lo
-  *(uint32_t*)ap = 0;
-  ap += 4;  // to_hi
-
-  // Match buffers.
-  id<MTLBuffer> match_buf =
+  // match_buf and match_count_buf are declared after this block; we
+  // need to allocate them first so we can grab their GPU addresses
+  // for the args struct.
+  id<MTLBuffer> match_buf_local =
       [device newBufferWithLength:256 * sizeof(GRDUInt256x64)
                           options:MTLResourceStorageModeShared];
-  id<MTLBuffer> match_count_buf =
+  id<MTLBuffer> match_count_buf_local =
       [device newBufferWithLength:sizeof(uint32_t)
                           options:MTLResourceStorageModeShared];
-  if (!match_buf || !match_count_buf) {
+  if (!match_buf_local || !match_count_buf_local) {
     fprintf(stderr, "bench: match alloc failed\n");
     return r;
   }
-  *(uint32_t*)[match_count_buf contents] = 0;
+  *(uint32_t *)[match_count_buf_local contents] = 0;
+
+  memset([args_buf contents], 0, args_len);
+  uint64_t *ap64 = (uint64_t *)[args_buf contents];
+  ap64[0] = [target_buf gpuAddress];
+  ap64[1] = [bitmap_buf gpuAddress];
+  ap64[2] = [anchors_buf gpuAddress];
+  uint32_t *ap32 = (uint32_t *)[args_buf contents];
+  ap32[6] = (uint32_t)kAnchorCount;        // num_anchors at offset 24
+  ap64[4] = [match_buf_local gpuAddress];
+  ap64[5] = [match_count_buf_local gpuAddress];
+  ap32[12] = 0;                            // from_lo
+  ap32[13] = 0;                            // from_hi
+  ap32[14] = (uint32_t)kAutotuneRange;     // to_lo
+  ap32[15] = 0;                            // to_hi
+
+  // Aliases to the local buffers already allocated (see above).
+  // These are not used at the encoder level (the kernel dereferences
+  // them via the args struct's pointer fields) but they're held so
+  // ARC keeps the buffers alive.
+  (void)match_buf_local; (void)match_count_buf_local;
 
   // Anchor stride 2^k threadgroups.
   uint32_t anchor_interval = 1u << anchor_k;
@@ -207,8 +314,8 @@ static BenchResult run_one(uint32_t tg_size, uint32_t anchor_k,
   [enc setComputePipelineState:pipeline];
   [enc setBuffer:args_buf offset:0 atIndex:0];
   [enc setBuffer:variants_buf offset:0 atIndex:1];
-  [enc setBuffer:match_buf offset:0 atIndex:2];
-  [enc setBuffer:match_count_buf offset:0 atIndex:3];
+  [enc setBuffer:match_buf_local offset:0 atIndex:2];
+  [enc setBuffer:match_count_buf_local offset:0 atIndex:3];
   uint32_t dispatch_threads = (uint32_t)kAutotuneRange;
   [enc dispatchThreads:MTLSizeMake(dispatch_threads, 1, 1)
       threadsPerThreadgroup:MTLSizeMake(tg_size, 1, 1)];
@@ -246,6 +353,7 @@ static void run_axis(const char* axis_name, const uint32_t* values,
   printf("== axis: %s ==\n", axis_name);
   printf("  %-16s %12s %16s %10s\n", "value", "j/sec", "EC_adds/sec",
          "wall(s)");
+  fflush(stdout);
   BenchResult best = {0};
   best.j_per_sec = 0;
   for (size_t i = 0; i < n_values; ++i) {

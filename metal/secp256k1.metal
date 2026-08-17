@@ -131,43 +131,76 @@ inline bool grdGte(UInt256x64 a, UInt256x64 b) {
 
 /** Returns `a * b (mod p)`. */
 inline UInt256x64 grdFieldMul(UInt256x64 a, UInt256x64 b) {
-  uint64_t r[8] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+  // 32-bit-limb schoolbook multiplication. We avoid `unsigned
+  // __int128` because the runtime MTLCompilerService LLVM on some
+  // macOS/Xcode versions fails the pipeline-state compilation with
+  // 'LLVM ERROR: <private>' when 128-bit integer expressions are
+  // used in compute kernels. The xcrun metal CLI compiler is fine
+  // with __int128; only the in-process service is affected. The
+  // 32-bit-limb form is the portable fallback.
 
-  // 4×4 schoolbook — 16 partial products.
-  for (uint64_t i = 0; i < 4; ++i) {
+  // Split each 64-bit limb into 32-bit halves. 8 limbs total.
+  uint32_t a32[8], b32[8], r32[16];
+  for (uint i = 0; i < 4; ++i) {
+    a32[2 * i]     = (uint32_t)(a.limbs[i] & 0xffffffffu);
+    a32[2 * i + 1] = (uint32_t)(a.limbs[i] >> 32);
+    b32[2 * i]     = (uint32_t)(b.limbs[i] & 0xffffffffu);
+    b32[2 * i + 1] = (uint32_t)(b.limbs[i] >> 32);
+  }
+  for (uint i = 0; i < 16; ++i) r32[i] = 0u;
+
+  // 8×8 = 64 partial products of 32-bit × 32-bit = 64-bit each.
+  for (uint i = 0; i < 8; ++i) {
     uint64_t carry = 0u;
-    for (uint64_t j = 0; j < 4; ++j) {
-      unsigned __int128 prod =
-          (unsigned __int128)a.limbs[i] * (unsigned __int128)b.limbs[j];
-      uint64_t lo = (uint64_t)prod;
-      uint64_t hi = (uint64_t)(prod >> 64);
-      uint64_t s = r[i + j] + lo;
-      uint64_t c1 = (s < r[i + j]) ? 1u : 0u;
+    for (uint j = 0; j < 8; ++j) {
+      uint64_t prod = (uint64_t)a32[i] * (uint64_t)b32[j];
+      uint64_t s = (uint64_t)r32[i + j] + prod;
+      uint64_t c1 = (s < (uint64_t)r32[i + j]) ? (1ull << 32) : 0u;
       uint64_t s2 = s + carry;
-      uint64_t c2 = (s2 < s) ? 1u : 0u;
-      r[i + j] = s2;
-      carry = hi + c1 + c2;
+      uint64_t c2 = (s2 < s) ? (1ull << 32) : 0u;
+      r32[i + j] = (uint32_t)s2;
+      carry = (s2 >> 32) + c1 + c2;
     }
-    r[i + 4] += carry;
+    // Propagate carry up.
+    uint k = i + 8;
+    while (carry > 0 && k < 16) {
+      uint64_t s = (uint64_t)r32[k] + carry;
+      r32[k] = (uint32_t)s;
+      carry = s >> 32;
+      ++k;
+    }
+  }
+
+  // Reassemble 16 × 32-bit limbs into 8 × 64-bit limbs.
+  uint64_t r[8];
+  for (uint i = 0; i < 8; ++i) {
+    r[i] = (uint64_t)r32[2 * i] | ((uint64_t)r32[2 * i + 1] << 32);
   }
 
   // Iterative reduction. Each iteration: r_low += r_high * c, where
-// c = 2^32 + 977. Repeated until r fits in 256 bits.
+  // c = 2^32 + 977. Repeated until r fits in 256 bits. 32-bit-limb
+  // multiply for the same LLVM portability reason.
   constexpr uint64_t kC = (1ull << 32) + 977ull;
+  constexpr uint32_t kC_lo = (uint32_t)(kC & 0xffffffffu);
+  constexpr uint32_t kC_hi = (uint32_t)(kC >> 32);
 
   while (r[4] != 0u || r[5] != 0u || r[6] != 0u || r[7] != 0u) {
     uint64_t new_r[5] = {r[0], r[1], r[2], r[3], 0u};
     uint64_t carry = 0u;
     for (int i = 0; i < 4; ++i) {
-      unsigned __int128 prod =
-          (unsigned __int128)r[4 + i] * (unsigned __int128)kC;
-      uint64_t prod_lo = (uint64_t)prod;
-      uint64_t prod_hi = (uint64_t)(prod >> 64);
-      unsigned __int128 sum = (unsigned __int128)new_r[i]
-                              + (unsigned __int128)prod_lo
-                              + (unsigned __int128)carry;
-      new_r[i] = (uint64_t)sum;
-      carry = (uint64_t)(sum >> 64) + prod_hi;
+      uint64_t rhs = r[4 + i];
+      uint32_t rhs_lo = (uint32_t)(rhs & 0xffffffffu);
+      uint32_t rhs_hi = (uint32_t)(rhs >> 32);
+      uint64_t p_lo = (uint64_t)rhs_lo * (uint64_t)kC_lo;
+      uint64_t p_hi = (uint64_t)rhs_lo * (uint64_t)kC_hi
+                   + (uint64_t)rhs_hi * (uint64_t)kC_lo;
+      uint64_t prod_lo = p_lo & 0xffffffffu;
+      uint64_t prod_hi = (p_lo >> 32) + (p_hi & 0xffffffffu);
+      uint64_t s = new_r[i] + prod_lo + carry;
+      uint64_t c1 = (s < new_r[i]) ? 1u : 0u;
+      uint64_t s2 = s;
+      new_r[i] = s2;
+      carry = prod_hi + c1 + (s >> 64);  // carry chain through 64-bit
     }
     new_r[4] = carry;
     r[0] = new_r[0];
