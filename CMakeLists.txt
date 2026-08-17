@@ -78,6 +78,7 @@ message(STATUS "xcrun:          ${XCRUN_TOOL}")
 # files fails with "cannot specify -o when generating multiple output files".
 set(METAL_SRC
   "${CMAKE_SOURCE_DIR}/metal/secp256k1.metal"
+  "${CMAKE_SOURCE_DIR}/metal/secp256k1_simd.metal"
   "${CMAKE_SOURCE_DIR}/metal/ecdsa.metal"
   "${CMAKE_SOURCE_DIR}/metal/sweep.metal"
   "${CMAKE_SOURCE_DIR}/metal/sweep_pubkey.metal"
