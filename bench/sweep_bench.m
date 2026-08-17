@@ -104,7 +104,8 @@ static BenchResult run_one(uint32_t tg_size, uint32_t anchor_k,
   id<MTLLibrary> library = nil;
   if (url && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
     library = [device newLibraryWithURL:url error:&lib_err];
-  } else {
+  }
+  if (!library) {
     library = [device newDefaultLibrary];
   }
   if (!library) {
