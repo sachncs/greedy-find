@@ -283,143 +283,6 @@ GRDUInt256x64 GRDFieldInvHost(GRDUInt256x64 a) {
 }
 
 // ----------------------------------------------------------------------------
-// Host-side EC point arithmetic
-// ----------------------------------------------------------------------------
-
-const GRDEcPoint GRDSecp256k1G = {
-    {{0x59F2815B16F81798ull, 0x029BFCDB2DCE28D9ull, 0x55A06295CE870B07ull,
-      0x79BE667EF9DCBBACull}},  // Gx little-endian limbs
-    {{0x9C47D08FFB10D4B8ull, 0xFD17B448A6855419ull, 0x5DA4FBFC0E1108A8ull,
-      0x483ADA7726A3C465ull}},  // Gy little-endian limbs
-    {{1, 0, 0, 0}}
-};
-
-GRDEcPoint GRDEcDoubleHost(GRDEcPoint p) {
-  if (GRDIsZero(p.Z)) return p;
-
-  GRDUInt256x64 A = GRDFieldSqrHost(p.X);
-  GRDUInt256x64 B = GRDFieldSqrHost(p.Y);
-  GRDUInt256x64 C = GRDFieldSqrHost(B);
-
-  GRDUInt256x64 t = GRDFieldAddHost(p.X, B);
-  t = GRDFieldSqrHost(t);
-  t = GRDFieldSubHost(t, A);
-  t = GRDFieldSubHost(t, C);
-  GRDUInt256x64 D = GRDFieldAddHost(t, t);
-
-  GRDUInt256x64 E = GRDFieldAddHost(GRDFieldAddHost(A, A), A);
-
-  GRDEcPoint r;
-  r.X = GRDFieldSubHost(GRDFieldSqrHost(E), GRDFieldAddHost(D, D));
-  r.Y = GRDFieldSubHost(D, r.X);
-  r.Y = GRDFieldMulHost(E, r.Y);
-  r.Y = GRDFieldSubHost(r.Y, GRDFieldAddHost(GRDFieldAddHost(GRDFieldAddHost(C, C),
-                                                              GRDFieldAddHost(C, C)),
-                                              GRDFieldAddHost(GRDFieldAddHost(C, C),
-                                                              GRDFieldAddHost(C, C))));
-  r.Z = GRDFieldMulHost(GRDFieldAddHost(p.Y, p.Y), p.Z);
-  return r;
-}
-
-GRDEcPoint GRDEcAddHost(GRDEcPoint p, GRDEcPoint q) {
-  if (GRDIsZero(p.Z)) return q;
-  if (GRDIsZero(q.Z)) return p;
-
-  GRDUInt256x64 Z1Z1 = GRDFieldSqrHost(p.Z);
-  GRDUInt256x64 Z2Z2 = GRDFieldSqrHost(q.Z);
-  GRDUInt256x64 U1 = GRDFieldMulHost(p.X, Z2Z2);
-  GRDUInt256x64 U2 = GRDFieldMulHost(q.X, Z1Z1);
-  GRDUInt256x64 S1 = GRDFieldMulHost(p.Y, GRDFieldMulHost(Z2Z2, q.Z));
-  GRDUInt256x64 S2 = GRDFieldMulHost(q.Y, GRDFieldMulHost(Z1Z1, p.Z));
-  GRDUInt256x64 H = GRDFieldSubHost(U2, U1);
-  GRDUInt256x64 I = GRDFieldAddHost(GRDFieldAddHost(H, H),
-                                   GRDFieldSqrHost(H));
-  GRDUInt256x64 J = GRDFieldMulHost(H, I);
-  GRDUInt256x64 rr = GRDFieldSubHost(S2, S1);
-  GRDUInt256x64 V = GRDFieldMulHost(U1, GRDFieldSqrHost(H));
-  GRDUInt256x64 r2 = GRDFieldSubHost(GRDFieldSubHost(GRDFieldSqrHost(rr), J),
-                                     GRDFieldAddHost(V, V));
-
-  GRDEcPoint r;
-  r.X = GRDFieldMulHost(I, r2);
-  r.Y = GRDFieldSubHost(GRDFieldMulHost(rr, GRDFieldSubHost(V, r2)),
-                         GRDFieldMulHost(S1, J));
-  r.Z = GRDFieldMulHost(GRDFieldMulHost(p.Z, q.Z), H);
-  return r;
-}
-
-GRDEcPoint GRDEcAddMixedHost(GRDEcPoint p, GRDEcPoint q) {
-  if (GRDIsZero(p.Z)) return q;
-  if (GRDIsZero(q.Z)) return p;
-
-  GRDUInt256x64 Z1Z1 = GRDFieldSqrHost(p.Z);
-  GRDUInt256x64 U2 = GRDFieldMulHost(q.X, Z1Z1);
-  GRDUInt256x64 S2 = GRDFieldMulHost(q.Y, GRDFieldMulHost(Z1Z1, p.Z));
-  GRDUInt256x64 H = GRDFieldSubHost(U2, p.X);
-  GRDUInt256x64 I = GRDFieldAddHost(GRDFieldAddHost(H, H),
-                                   GRDFieldSqrHost(H));
-  GRDUInt256x64 J = GRDFieldMulHost(H, I);
-  GRDUInt256x64 V = GRDFieldMulHost(p.X, GRDFieldSqrHost(H));
-  GRDUInt256x64 r2 = GRDFieldSubHost(GRDFieldSubHost(GRDFieldSqrHost(S2), J),
-                                     GRDFieldAddHost(V, V));
-
-  GRDEcPoint r;
-  r.X = GRDFieldMulHost(I, r2);
-  r.Y = GRDFieldSubHost(GRDFieldMulHost(S2, GRDFieldSubHost(V, r2)),
-                         GRDFieldMulHost(S2, J));
-  r.Z = GRDFieldAddHost(GRDFieldAddHost(p.Z, p.Z),
-                         GRDFieldMulHost(GRDFieldAddHost(H, H), p.Z));
-  return r;
-}
-
-GRDEcPoint GRDEcNegHost(GRDEcPoint p) {
-  GRDEcPoint r;
-  r.X = p.X;
-  r.Y = GRDFieldSubHost(GRDPrimeP, p.Y);
-  r.Z = p.Z;
-  return r;
-}
-
-GRDUInt256x64 GRDReduceModNHost(GRDUInt256x64 a) {
-  while (GRDGte(a, GRDOrderN)) {
-    uint64_t borrow = 0;
-    a.limbs[0] = a.limbs[0] - GRDOrderN.limbs[0];
-    borrow = (a.limbs[0] > UINT64_MAX - GRDOrderN.limbs[0]) ? 1u : 0u;
-    a.limbs[1] = a.limbs[1] - GRDOrderN.limbs[1] - borrow;
-    borrow = (a.limbs[1] > UINT64_MAX - GRDOrderN.limbs[1] - borrow) ? 1u : 0u;
-    a.limbs[2] = a.limbs[2] - GRDOrderN.limbs[2] - borrow;
-    borrow = (a.limbs[2] > UINT64_MAX - GRDOrderN.limbs[2] - borrow) ? 1u : 0u;
-    a.limbs[3] = a.limbs[3] - GRDOrderN.limbs[3] - borrow;
-  }
-  return a;
-}
-
-GRDEcPoint GRDScalarMulHost(GRDEcPoint p, GRDUInt256x64 k) {
-  GRDEcPoint result = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};  // identity
-  bool found_one = false;
-  for (int i = 255; i >= 0; --i) {
-    if (found_one) result = GRDEcDoubleHost(result);
-    uint64_t bit;
-    if (i < 64) bit = (k.limbs[0] >> i) & 1ul;
-    else if (i < 128) bit = (k.limbs[1] >> (i - 64)) & 1ul;
-    else if (i < 192) bit = (k.limbs[2] >> (i - 128)) & 1ul;
-    else bit = (k.limbs[3] >> (i - 192)) & 1ul;
-    if (bit) {
-      if (found_one) result = GRDEcAddHost(result, p);
-      else {
-        result = p;
-        found_one = true;
-      }
-    }
-  }
-  return result;
-}
-
-GRDEcPoint GRDScalarMulGHost(GRDUInt256x64 k) {
-  return GRDScalarMulHost(GRDSecp256k1G, k);
-}
-
-// ----------------------------------------------------------------------------
 // Comparison / equality (host-side mirror of metal/secp256k1.metal)
 // ----------------------------------------------------------------------------
 
@@ -454,4 +317,143 @@ void GRDU256Hex(char *out, size_t out_len, GRDUInt256x64 a) {
     }
   }
   out[pos] = '\0';
+}
+// ----------------------------------------------------------------------------
+// Host-side EC point arithmetic (uses bitcoin-core/secp256k1)
+// ----------------------------------------------------------------------------
+
+#include <secp256k1.h>
+
+static secp256k1_context *grd_ctx(void) {
+  static secp256k1_context *ctx = NULL;
+  if (!ctx) ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+  return ctx;
+}
+
+static void limbs_to_be32(uint8_t out[32], GRDUInt256x64 v) {
+  for (int i = 0; i < 4; ++i) {
+    uint64_t limb = v.limbs[3 - i];
+    for (int j = 8; j-- > 0;) out[i * 8 + j] = (uint8_t)(limb >> (j * 8));
+  }
+}
+
+static GRDUInt256x64 be32_to_limbs(const uint8_t in[32]) {
+  GRDUInt256x64 r = {{0, 0, 0, 0}};
+  for (int i = 0; i < 4; ++i) {
+    uint64_t limb = 0;
+    for (int j = 0; j < 8; ++j) limb = (limb << 8) | in[i * 8 + j];
+    r.limbs[3 - i] = limb;
+  }
+  return r;
+}
+
+static secp256k1_pubkey grd_pubkey_from_point(GRDEcPoint p) {
+  uint8_t in[64];
+  limbs_to_be32(in, p.X);
+  limbs_to_be32(in + 32, p.Y);
+  secp256k1_pubkey pk;
+  // secp256k1_ec_pubkey_parse fails on the identity (X=0, Y=0). Fall
+  // back to G so the host reference stays well-defined.
+  if (!secp256k1_ec_pubkey_parse(grd_ctx(), &pk, in, 64)) {
+    limbs_to_be32(in, GRDSecp256k1G.X);
+    limbs_to_be32(in + 32, GRDSecp256k1G.Y);
+    if (!secp256k1_ec_pubkey_parse(grd_ctx(), &pk, in, 64)) {
+      // G should always parse. If this fails, secp256k1 is broken.
+      memset(&pk, 0, sizeof(pk));
+    }
+  }
+  return pk;
+}
+
+static GRDEcPoint grd_point_from_pubkey(const secp256k1_pubkey *pk) {
+  uint8_t serialized[65];
+  size_t outlen = 65;
+  (void)secp256k1_ec_pubkey_serialize(grd_ctx(), serialized, &outlen, pk,
+                                       SECP256K1_EC_UNCOMPRESSED);
+  GRDEcPoint out;
+  out.X = be32_to_limbs(serialized + 1);
+  out.Y = be32_to_limbs(serialized + 33);
+  out.Z.limbs[0] = 1u;
+  out.Z.limbs[1] = 0u;
+  out.Z.limbs[2] = 0u;
+  out.Z.limbs[3] = 0u;
+  return out;
+}
+
+const GRDEcPoint GRDSecp256k1G = {
+    {{0x59F2815B16F81798ull, 0x029BFCDB2DCE28D9ull, 0x55A06295CE870B07ull,
+      0x79BE667EF9DCBBACull}},
+    {{0x9C47D08FFB10D4B8ull, 0xFD17B448A6855419ull, 0x5DA4FBFC0E1108A8ull,
+      0x483ADA7726A3C465ull}},
+    {{1u, 0u, 0u, 0u}}};
+
+GRDEcPoint GRDEcDoubleHost(GRDEcPoint p) {
+  secp256k1_pubkey pk = grd_pubkey_from_point(p);
+  const secp256k1_pubkey *pks[2] = {&pk, &pk};
+  secp256k1_pubkey out;
+  (void)secp256k1_ec_pubkey_combine(grd_ctx(), &out, pks, 2);
+  return grd_point_from_pubkey(&out);
+}
+
+GRDEcPoint GRDEcAddHost(GRDEcPoint p, GRDEcPoint q) {
+  secp256k1_pubkey pk_p = grd_pubkey_from_point(p);
+  secp256k1_pubkey pk_q = grd_pubkey_from_point(q);
+  const secp256k1_pubkey *pks[2] = {&pk_p, &pk_q};
+  secp256k1_pubkey out;
+  (void)secp256k1_ec_pubkey_combine(grd_ctx(), &out, pks, 2);
+  return grd_point_from_pubkey(&out);
+}
+
+GRDEcPoint GRDEcAddMixedHost(GRDEcPoint p, GRDEcPoint q) {
+  return GRDEcAddHost(p, q);
+}
+
+GRDEcPoint GRDEcNegHost(GRDEcPoint p) {
+  GRDEcPoint r;
+  r.X = p.X;
+  r.Y = GRDFieldSubHost(GRDPrimeP, p.Y);
+  r.Z = p.Z;
+  return r;
+}
+
+GRDEcPoint GRDScalarMulHost(GRDEcPoint p, GRDUInt256x64 k) {
+  uint8_t k_be[32];
+  limbs_to_be32(k_be, GRDReduceModNHost(k));
+  secp256k1_pubkey pk = grd_pubkey_from_point(p);
+  (void)secp256k1_ec_pubkey_tweak_mul(grd_ctx(), &pk, k_be);
+  return grd_point_from_pubkey(&pk);
+}
+
+GRDUInt256x64 GRDReduceModNHost(GRDUInt256x64 a) {
+  while (1) {
+    int ge = (a.limbs[3] > GRDOrderN.limbs[3]) ||
+             (a.limbs[3] == GRDOrderN.limbs[3] && a.limbs[2] > GRDOrderN.limbs[2]) ||
+             (a.limbs[3] == GRDOrderN.limbs[3] && a.limbs[2] == GRDOrderN.limbs[2] &&
+              a.limbs[1] > GRDOrderN.limbs[1]) ||
+             (a.limbs[3] == GRDOrderN.limbs[3] && a.limbs[2] == GRDOrderN.limbs[2] &&
+              a.limbs[1] == GRDOrderN.limbs[1] &&
+              a.limbs[0] >= GRDOrderN.limbs[0]);
+    if (!ge) break;
+    uint64_t borrow = 0;
+    a.limbs[0] = a.limbs[0] - GRDOrderN.limbs[0];
+    borrow = (a.limbs[0] > UINT64_MAX - GRDOrderN.limbs[0]) ? 1u : 0u;
+    a.limbs[1] = a.limbs[1] - GRDOrderN.limbs[1] - borrow;
+    borrow = (a.limbs[1] > UINT64_MAX - GRDOrderN.limbs[1] - borrow) ? 1u : 0u;
+    a.limbs[2] = a.limbs[2] - GRDOrderN.limbs[2] - borrow;
+    borrow = (a.limbs[2] > UINT64_MAX - GRDOrderN.limbs[2] - borrow) ? 1u : 0u;
+    a.limbs[3] = a.limbs[3] - GRDOrderN.limbs[3] - borrow;
+  }
+  return a;
+}
+
+GRDEcPoint GRDScalarMulGHost(GRDUInt256x64 k) {
+  uint8_t k_be[32];
+  limbs_to_be32(k_be, GRDReduceModNHost(k));
+  uint8_t serialized[65] = {0x04};
+  limbs_to_be32(serialized + 1, GRDSecp256k1G.X);
+  limbs_to_be32(serialized + 33, GRDSecp256k1G.Y);
+  secp256k1_pubkey base;
+  (void)secp256k1_ec_pubkey_parse(grd_ctx(), &base, serialized, 65);
+  (void)secp256k1_ec_pubkey_tweak_mul(grd_ctx(), &base, k_be);
+  return grd_point_from_pubkey(&base);
 }
