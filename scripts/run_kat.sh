@@ -22,6 +22,7 @@ printf "[run_kat] building KATs\n"
 cmake --build "${BUILD_DIR}" --target address_kat \
                                    cache_kat \
                                    checkpoint_kat \
+                                   ec_kat \
                                    field_kat \
                                    hash_kat \
                                    load_balance_kat \
@@ -40,7 +41,7 @@ while IFS= read -r -d '' kat; do
     failures=$((failures + 1))
   fi
 done < <(find "${REPO_ROOT}/tests/kat" -maxdepth 1 -type f \
-            \( -name '*.c' -o -name '*.m' \) ! -name 'ec_kat.c' \
+            \( -name '*.c' -o -name '*.m' \) \
             -print0 | sort -z)
 
 if (( failures > 0 )); then

@@ -353,17 +353,23 @@ static GRDUInt256x64 be32_to_limbs(const uint8_t in[32]) {
 }
 
 static secp256k1_pubkey grd_pubkey_from_point(GRDEcPoint p) {
-  uint8_t in[64];
-  limbs_to_be32(in, p.X);
-  limbs_to_be32(in + 32, p.Y);
+  // secp256k1 expects 65 bytes for an uncompressed pubkey: a 0x04
+  // prefix followed by 32-byte big-endian X and Y. The earlier
+  // version of this routine passed 64 bytes (no prefix) and
+  // triggered secp256k1's `!secp256k1_fe_is_zero(&ge->x)` abort on
+  // any non-trivial input — see ec_kat failure history.
+  uint8_t in[65];
+  in[0] = 0x04;
+  limbs_to_be32(in + 1, p.X);
+  limbs_to_be32(in + 33, p.Y);
   secp256k1_pubkey pk;
-  // secp256k1_ec_pubkey_parse fails on the identity (X=0, Y=0). Fall
-  // back to G so the host reference stays well-defined.
-  if (!secp256k1_ec_pubkey_parse(grd_ctx(), &pk, in, 64)) {
-    limbs_to_be32(in, GRDSecp256k1G.X);
-    limbs_to_be32(in + 32, GRDSecp256k1G.Y);
-    if (!secp256k1_ec_pubkey_parse(grd_ctx(), &pk, in, 64)) {
-      // G should always parse. If this fails, secp256k1 is broken.
+  if (!secp256k1_ec_pubkey_parse(grd_ctx(), &pk, in, 65)) {
+    // Identity (X=0, Y=0) doesn't parse; fall back to G so the host
+    // reference stays well-defined. G should always parse.
+    in[0] = 0x04;
+    limbs_to_be32(in + 1, GRDSecp256k1G.X);
+    limbs_to_be32(in + 33, GRDSecp256k1G.Y);
+    if (!secp256k1_ec_pubkey_parse(grd_ctx(), &pk, in, 65)) {
       memset(&pk, 0, sizeof(pk));
     }
   }
