@@ -171,12 +171,17 @@ file(GLOB KAT_SRC
     # KATs need the host-side helpers from host/ecc.c and friends.
     # Note: host/main.m is excluded (defines main, conflicts with KAT
     # main). KATs expose their own main.
+    set(_kat_extra "")
+    if("${KAT_NAME}" STREQUAL "cache_kat")
+      list(APPEND _kat_extra "${CMAKE_SOURCE_DIR}/host/cache.m")
+    endif()
     add_executable("${KAT_NAME}" "${KAT_FILE}"
       "${CMAKE_SOURCE_DIR}/host/ecc.c"
       "${CMAKE_SOURCE_DIR}/host/hash.c"
       "${CMAKE_SOURCE_DIR}/host/pubkey.m"
       "${CMAKE_SOURCE_DIR}/host/address.m"
-      "${CMAKE_SOURCE_DIR}/host/sweep.m")
+      "${CMAKE_SOURCE_DIR}/host/sweep.m"
+      ${_kat_extra})
     target_include_directories("${KAT_NAME}" PRIVATE
       "${CMAKE_SOURCE_DIR}/host"
       "${CMAKE_SOURCE_DIR}/tests"
