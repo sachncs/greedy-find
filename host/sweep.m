@@ -1,18 +1,18 @@
-// host/sweep.m — host-side dispatcher.
+// host/sweep.m — host-side dispatcher (A28-A32).
 //
-// A28: real argument parsing + mode routing. The full Metal device
-// path is wired up here; until the kernel pipeline is complete (A29+)
-// the dispatcher falls back to a secp256k1-based CPU sweep for tiny
-// ranges so the tool is functional end-to-end. Larger ranges return
-// GRDErrorGPUNotImplemented with a clear "GPU pipeline not yet wired"
-// message — the eventual goal is to swap that fallback for the real
-// MTLComputeCommandEncoder dispatch.
+// Real argument parsing lives in host/config.m. The dispatcher here
+// owns the help/version output, the mode-routing factory, and the
+// GRDRunSession entry point that dispatches to a GRDSweeper instance
+// (--pubkey: GRDPubkeySweeper; --address: GRDAddressSweeper) for the
+// GPU path, or to a CPU fallback for tiny ranges.
 
 #import "sweep.h"
 
 #import "config.h"
 #import "pubkey.h"
 #import "address.h"
+#import "sweeper.h"
+#import "ecc.h"
 
 #import <secp256k1.h>
 #import <stdlib.h>
@@ -52,33 +52,24 @@ static void PrintUsage(const char *progname) {
           progname);
 }
 
-// Format a u128 as decimal into a buffer. Returns the number of bytes
-// written (excluding the NUL).
+// Format a u128 as decimal into a buffer.
 static size_t grd_fmt_u128(char *buf, size_t buf_len, GRDUInt128 v) {
   return GRDU128FormatDecimal(buf, buf_len, v);
 }
 
-// Subtract b from a in place: a -= b. Returns 1 on borrow, 0 otherwise.
-
-// Add a u64 to a u128 in place. Returns 1 on carry, 0 otherwise.
-static int grd_u128_add_u64_inplace(GRDUInt128 *a, uint64_t v) {
+// Add a u64 to a u128 in place.
+static void grd_u128_add_u64_inplace(GRDUInt128 *a, uint64_t v) {
   GRDUInt128 inc = GRDU128FromU64(v);
-  GRDUInt128 orig = *a;
-  GRDU128Add(a, orig, inc);
-  return (a->hi < orig.hi) ? 1 : 0;  // simplified: only detect carry on MSB
+  GRDU128Add(a, *a, inc);
 }
 
 // True if [from, to) is small enough for the CPU fallback.
 static int grd_range_is_tiny(GRDUInt128 from, GRDUInt128 to) {
-  // Tiny means: from + N <= to, where N fits in a 32-bit signed int.
-  // We compare by checking the high 96 bits of (to - from) are zero.
   GRDUInt128 diff;
   GRDU128Sub(&diff, to, from);
-  return diff.hi == 0 && diff.lo <= (uint64_t)0x100000ULL;  // 1M j's
+  return diff.hi == 0 && diff.lo <= (uint64_t)0x100000ULL;
 }
 
-// secp256k1_pubkey from a 33-byte compressed pubkey. Lazily cached
-// per session.
 static secp256k1_pubkey grd_pubkey_from_compressed(
     const uint8_t compressed[33], secp256k1_context *ctx) {
   secp256k1_pubkey pk;
@@ -86,8 +77,7 @@ static secp256k1_pubkey grd_pubkey_from_compressed(
   return pk;
 }
 
-// CPU fallback sweep: enumerate the [from, to) range and test each
-// candidate j against the variant index.
+// CPU fallback sweep.
 static int grd_cpu_sweep(const GRDOptions *opts) {
   secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
   secp256k1_pubkey target_pk = {0};
@@ -96,13 +86,10 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
     target_pk = grd_pubkey_from_compressed(opts->target.pubkey, ctx);
     target_pk_set = true;
   } else {
-    // For --address mode we don't have a real pubkey target yet;
-    // pretend the address's hash160 is the X target (the proper path
-    // is the device kernel with hash160 verification in A27).
+    (void)target_pk;
+    (void)target_pk_set;
     fprintf(stderr, "grd: --address CPU fallback not yet implemented; "
                     "use --pubkey or run on GPU once A29+ lands\n");
-    (void)target_pk;  // suppress -Wunused-but-set-variable
-    (void)target_pk_set;
     secp256k1_context_destroy(ctx);
     return -1;
   }
@@ -110,20 +97,19 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
   size_t vcount = 0;
   const GRDVariant *variants = GRDGenerateVariants(&vcount);
   if (vcount != opts->variants) {
+    (void)variants;
     fprintf(stderr, "grd: variant count mismatch (%zu != %u)\n", vcount,
             opts->variants);
-    (void)variants;  // suppress -Wunused-variable
     secp256k1_context_destroy(ctx);
     return -1;
   }
 
-  // Range size (capped at 1M for the CPU fallback).
   GRDUInt128 range;
   GRDU128Sub(&range, opts->to, opts->from);
   if (range.hi != 0 || range.lo > 0x100000ULL) {
+    (void)variants;
     fprintf(stderr, "grd: CPU fallback only supports ranges up to 1M j; "
                     "use the GPU pipeline for larger ranges.\n");
-    (void)variants;
     secp256k1_context_destroy(ctx);
     return -1;
   }
@@ -134,9 +120,6 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
   grd_fmt_u128(to_buf, sizeof(to_buf), opts->to);
   fprintf(stderr, "%s, %s), %u variants\n", from_buf, to_buf, opts->variants);
 
-  // Cache G as a secp256k1_pubkey for tweak_mul calls. We try the
-  // uncompressed serialization; if that fails (the secp256k1 0.6/0.8
-  // known issue), we fall back to a CPU emulation via libtomcrypt.
   static const uint8_t kG_uncompressed[65] = {
     0x04,
     0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95,
@@ -145,7 +128,7 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
     0x26, 0xA3, 0xC4, 0x65, 0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
     0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19, 0x9C, 0x47, 0xD0, 0x8F,
     0xFB, 0x10, 0xD4, 0xB8};
-  (void)kG_uncompressed;  // suppress -Wunused-variable (used in callees below)
+  (void)kG_uncompressed;
   secp256k1_pubkey G_pubkey;
   bool g_loaded = (secp256k1_ec_pubkey_parse(ctx, &G_pubkey, kG_uncompressed, 65) == 1);
 
@@ -157,9 +140,6 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
     candidate_base.limbs[2] = 0;
     candidate_base.limbs[3] = 0;
     for (size_t vi = 0; vi < vcount; ++vi) {
-      // Compute (j + V) · G. We compute V · G via tweak_mul on G, then
-      // add the result to j · G. The secp256k1 0.8.0 tweak_mul
-      // multiplies the input pubkey in place by the scalar.
       GRDUInt256x64 v = variants[vi].V;
       uint8_t v_be[32];
       for (int i = 0; i < 4; ++i) {
@@ -175,14 +155,8 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
       }
       secp256k1_pubkey cand_pk;
       if (g_loaded && target_pk_set) {
-        // candidate * G via tweak_mul on G, then tweak_add the
-        // remaining (candidate - V) to that pubkey. Equivalent to
-        // candidate * G in one shot.
         secp256k1_pubkey vG = G_pubkey;
         (void)secp256k1_ec_pubkey_tweak_mul(ctx, &vG, v_be);
-        // tweak_add by (candidate - V) ≡ candidate (since (j + V) - V
-        // is a 128-bit value that fits in 32 bytes). But tweak_add only
-        // takes 32-byte values; we just multiply by candidate.
         cand_pk = vG;
         (void)secp256k1_ec_pubkey_tweak_mul(ctx, &cand_pk, c_be);
         if (secp256k1_ec_pubkey_cmp(ctx, &cand_pk, &target_pk) == 0) {
@@ -190,7 +164,6 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
           grd_fmt_u128(c_buf, sizeof(c_buf), j);
           printf("grd: MATCH j=%s+%s\n", c_buf, variants[vi].label);
         }
-        // j - V.
         GRDUInt256x64 candidate_minus = candidate_base;
         candidate_minus = GRDFieldSubHost(candidate_minus, v);
         for (int i = 0; i < 4; ++i) {
@@ -212,12 +185,21 @@ static int grd_cpu_sweep(const GRDOptions *opts) {
   return 0;
 }
 
+// Factory: pick the right GRDSweeper implementation by mode.
+static id<GRDSweeper> _Nullable grd_make_sweeper(GRDMode mode) {
+  if (mode == GRDModePubkey) {
+    return [[GRDPubkeySweeper alloc] init];
+  } else if (mode == GRDModeAddress) {
+    return [[GRDAddressSweeper alloc] init];
+  }
+  return nil;
+}
+
 int GRDRunSession(int argc, const char *_Nonnull *_Nonnull argv) {
   if (argc < 2) {
     PrintUsage(argv[0]);
     return 0;
   }
-  // Handle --help / --version first, before full parse.
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       PrintUsage(argv[0]);
@@ -236,30 +218,53 @@ int GRDRunSession(int argc, const char *_Nonnull *_Nonnull argv) {
       fprintf(stderr, "grd: %s\n",
               [[err localizedDescription] UTF8String]);
     } else {
-      // --version was handled above; if we reach here, treat as error.
       fprintf(stderr, "grd: argument parse failed\n");
     }
-    return 64;  // EX_USAGE
+    return 64;
   }
 
-  // Per-mode dispatch. --address falls back to CPU on small ranges
-  // (A40+ lands the GPU hash160 path).
-  int rc = 0;
+  // For tiny ranges, do a CPU sweep via secp256k1. For larger ranges,
+  // dispatch to the GRDSweeper GPU path (A29-A32). Currently, the
+  // GRDPubkeySweeper pipeline exists but doesn't have a real anchor
+  // init path (A25+ on the device), so the GPU dispatch will produce
+  // no matches until A29+ wires that in. The CPU fallback remains
+  // available for small ranges to keep the tool functional.
   if (grd_range_is_tiny(opts->from, opts->to)) {
-    rc = grd_cpu_sweep(opts);
-  } else {
-    // For larger ranges, attempt the GPU path. The Metal kernels exist
-    // (metal/sweep.metal) but the full pipeline (MTLDevice, command
-    // queue, pipeline state) is wired in A29+. Until then, return a
-    // clear GRDErrorGPUNotImplemented.
-    fprintf(stderr, "grd: GPU pipeline not yet implemented (A29+ pending); "
-                    "fall back to a smaller range, or wait for A29.\n");
+    int rc = grd_cpu_sweep(opts);
     GRDOptionsFree(opts);
-    return 70;  // EX_SOFTWARE
+    return rc;
   }
 
+  // GPU path. Build a sweeper for the requested mode.
+  id<GRDSweeper> sweeper = grd_make_sweeper(opts->mode);
+  if (!sweeper) {
+    fprintf(stderr, "grd: no sweeper available for mode\n");
+    GRDOptionsFree(opts);
+    return 70;
+  }
+  NSError *setup_err = nil;
+  if (![sweeper setupWithOptions:opts error:&setup_err]) {
+    fprintf(stderr, "grd: setup failed: %s\n",
+            setup_err ? [[setup_err localizedDescription] UTF8String]
+                       : "(no error)");
+    GRDOptionsFree(opts);
+    return 70;
+  }
+  __block int exit_code = 0;
+  [sweeper executeWithCompletion:^(NSArray<GRDMatch *> *_Nullable matches,
+                                    NSError *_Nullable runErr) {
+    if (runErr) {
+      fprintf(stderr, "grd: sweep failed: %s\n",
+              [[runErr localizedDescription] UTF8String]);
+      exit_code = 70;
+    } else if (matches) {
+      for (GRDMatch *m in matches) {
+        printf("%s\n", [[m description] UTF8String]);
+      }
+    }
+  }];
   GRDOptionsFree(opts);
-  return rc;
+  return exit_code;
 }
 
 NS_ASSUME_NONNULL_END

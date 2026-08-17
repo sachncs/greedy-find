@@ -118,7 +118,6 @@ add_custom_target(greedy_metallib ALL DEPENDS "${METAL_LIB}")
 file(GLOB HOST_SRC
   "${CMAKE_SOURCE_DIR}/host/*.m"
   "${CMAKE_SOURCE_DIR}/host/*.c"
-  "${CMAKE_SOURCE_DIR}/host/config.m"
 )
 
 add_executable(greedyfind ${HOST_SRC})
