@@ -108,9 +108,9 @@ when only the address is known.
 
 `plan.md` locks the reference range to `[2^70, 2^71)`, a
 Bitcoin Puzzle #71-style search space. The full range is
-~10^21 j; at the projected M-series throughput of ~10^8 j/sec
-that's ~10^13 seconds — well beyond the lifetime of any single
-machine. The realistic use is a partial sweep: a co-operative
-network of machines each takes a `[2^70 + k·2^k, ...)` slice,
-each maintains its own checkpoint, and matches are recovered
-via NDJSON telemetry.
+~10^21 j. Wall-clock to exhaustive search depends entirely on
+the M-series hardware it runs on; measure with
+`bench/sweep_bench` and a real GPU. The realistic use is a
+partial sweep: a co-operative network of machines each takes a
+`[2^70 + k·2^k, ...)` slice, each maintains its own checkpoint,
+and matches are recovered via NDJSON telemetry.

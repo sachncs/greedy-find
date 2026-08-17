@@ -48,7 +48,8 @@ yielding candidate private keys `d = V ± j (mod n)` (pubkey mode) or `d = j`
 batch inversion per threadgroup).
 
 The reference range for v0.1 is **`[2^70, 2^71)`** — a Bitcoin Puzzle #71-style
-search space. Throughput expectations are projected for Apple Silicon M-series
+search space. Throughput is measured on the target host via `bench/sweep_bench`; the
+repo does not project a number.
 hardware; see §10.
 
 ---
@@ -677,19 +678,13 @@ bash scripts/run_kat.sh
 
 ---
 
-## 10. Throughput Expectations
+## 10. Throughput
 
 The reference range `[2^70, 2^71)` requires `2^70 ≈ 1.18 × 10^21` EC
 operations. Anchor tables every `2^16` threadgroups cut bootstrap scalar muls
-from `2^65` to `2^49`. These projections are estimates; actual numbers come
-from unit A36's microbench and may differ by ±30%.
-
-| Devices | `--pubkey` projected | `--address` projected (+15–25%) |
-|---|---|---|
-| 1 × M3 Ultra | ~37 years | ~46 years |
-| 4 × M3 Ultra | ~9 years | ~11 years |
-| 16 × M3 Ultra | ~2.3 years | ~2.9 years |
-| 64 × M3 Ultra | ~7 months | ~9 months |
+from `2^65` to `2^49`. The repo does not project throughput; run
+`bench/sweep_bench` on the target host and use the measured j/sec to
+estimate wall-clock for any specific range and device count.
 
 Both modes are dominated by EC adds. Hashing adds a fixed ~15–25% per-`j`
 overhead but no new asymptotics. The tool is designed as a long-running
