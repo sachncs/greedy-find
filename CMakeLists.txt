@@ -122,7 +122,7 @@ add_executable(greedyfind ${HOST_SRC})
 
 target_include_directories(greedyfind PRIVATE
   "${CMAKE_SOURCE_DIR}/host"
-  /tmp/secp256k1-install/include
+  /opt/homebrew/Cellar/secp256k1/0.8.0/include
   /opt/homebrew/include
 )
 
@@ -133,7 +133,7 @@ find_library(METAL_FRAMEWORK Metal REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 
 target_link_directories(greedyfind PRIVATE
-  /tmp/secp256k1-install/lib
+  /opt/homebrew/Cellar/secp256k1/0.8.0/lib
   /opt/homebrew/lib
 )
 
@@ -160,13 +160,20 @@ option(GRD_BUILD_TESTS "Build unit and KAT tests" ON)
 if(GRD_BUILD_TESTS)
   enable_testing()
 
-file(GLOB KAT_SRC "${CMAKE_SOURCE_DIR}/tests/kat/*.c")
+file(GLOB KAT_SRC
+  "${CMAKE_SOURCE_DIR}/tests/kat/*.c"
+  "${CMAKE_SOURCE_DIR}/tests/kat/*.m"
+)
   foreach(KAT_FILE ${KAT_SRC})
     get_filename_component(KAT_NAME "${KAT_FILE}" NAME_WE)
     # KATs need the host-side helpers from host/ecc.c and friends.
+    # Note: host/main.m is excluded (defines main, conflicts with KAT
+    # main). KATs expose their own main.
     add_executable("${KAT_NAME}" "${KAT_FILE}"
       "${CMAKE_SOURCE_DIR}/host/ecc.c"
-      "${CMAKE_SOURCE_DIR}/host/hash.c")
+      "${CMAKE_SOURCE_DIR}/host/hash.c"
+      "${CMAKE_SOURCE_DIR}/host/pubkey.m"
+      "${CMAKE_SOURCE_DIR}/host/sweep.m")
     target_include_directories("${KAT_NAME}" PRIVATE
       "${CMAKE_SOURCE_DIR}/host"
       "${CMAKE_SOURCE_DIR}/tests"
@@ -181,15 +188,15 @@ file(GLOB KAT_SRC "${CMAKE_SOURCE_DIR}/tests/kat/*.c")
     endif()
     target_compile_options("${KAT_NAME}" PRIVATE ${GRD_WARN_FLAGS})
     # Link against the third-party crypto libraries we use for the
-    # host reference. secp256k1 lives under /tmp/secp256k1-install
-    # (built from bitcoin-core/secp256k1). libtomcrypt comes from
-    # Homebrew. Override via environment if installed elsewhere.
+    # host reference. secp256k1 comes from Homebrew (v0.8.0).
+    # libtomcrypt comes from Homebrew. Override via environment if
+    # installed elsewhere.
     target_include_directories("${KAT_NAME}" PRIVATE
-      /tmp/secp256k1-install/include
+      /opt/homebrew/Cellar/secp256k1/0.8.0/include
       /opt/homebrew/include
     )
     target_link_directories("${KAT_NAME}" PRIVATE
-      /tmp/secp256k1-install/lib
+      /opt/homebrew/Cellar/secp256k1/0.8.0/lib
       /opt/homebrew/lib
     )
     target_link_libraries("${KAT_NAME}" PRIVATE
