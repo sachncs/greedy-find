@@ -199,10 +199,45 @@ inline UInt256x64 grdFieldMul(UInt256x64 a, UInt256x64 b) {
 //
 // Specialised form of `grdFieldMul(a, a)` — saves ~half the partial
 // products via symmetry (a*b*j == a*j*b for i != j). For simplicity
-// we delegate to `grdFieldMul` here; A9 may rewrite this with the
-// symmetric form if benchmarks justify.
+// we delegate to `grdFieldMul` here; future optimisation may rewrite
+// this with the symmetric form if benchmarks justify.
 // ----------------------------------------------------------------------------
 
 inline UInt256x64 grdFieldSqr(UInt256x64 a) {
   return grdFieldMul(a, a);
+}
+
+// ----------------------------------------------------------------------------
+// Modular inverse via Fermat's little theorem
+//
+// For prime p, a^(p-2) mod p = a^(-1) mod p (when a != 0). The
+// exponentiation uses square-and-multiply with the standard binary
+// representation of (p-2) = 2^256 - 2^32 - 979 (i.e. p - 3).
+//
+// Not constant-time; the sweep context does not require it.
+// ----------------------------------------------------------------------------
+
+/**
+ * Returns a^(-1) mod p (or 0 if a == 0). Uses Fermat's little theorem:
+ * a^(p-2) mod p.
+ */
+inline UInt256x64 grdFieldInv(UInt256x64 a) {
+  // Exponent = p - 2 =
+  //   0xFFFFFFFFFFFFFFFF FFFFFFFFFFFFFFFF FFFFFFFFFFFFFFFF FFFFFFFEFFFFFC2D
+  UInt256x64 result = {{1ul, 0ul, 0ul, 0ul}};
+  UInt256x64 base = a;
+  for (uint i = 0; i < 256; ++i) {
+    constexpr ulong kExpLo = 0xFFFFFFFEFFFFFC2Dul;
+    constexpr ulong kExp1 = 0xFFFFFFFFFFFFFFFFul;
+    constexpr ulong kExp2 = 0xFFFFFFFFFFFFFFFFul;
+    constexpr ulong kExp3 = 0xFFFFFFFFFFFFFFFFul;
+    uint bit;
+    if (i < 64) bit = (kExpLo >> i) & 1u;
+    else if (i < 128) bit = (kExp1 >> (i - 64)) & 1u;
+    else if (i < 192) bit = (kExp2 >> (i - 128)) & 1u;
+    else bit = (kExp3 >> (i - 192)) & 1u;
+    if (bit) result = grdFieldMul(result, base);
+    if (i < 255) base = grdFieldSqr(base);
+  }
+  return result;
 }

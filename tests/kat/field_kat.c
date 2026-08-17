@@ -138,6 +138,23 @@ static void test_mul_sqr(void) {
   GRD_KAT_ASSERT_EQ("sqr(p-1)", GRDFieldSqrHost(pm1), one);
 }
 
+static void test_inv(void) {
+  GRDUInt256x64 one = make_u256(1, 0, 0, 0);
+  GRDUInt256x64 two = make_u256(2, 0, 0, 0);
+  GRDUInt256x64 pm1 = p_minus_one();
+
+  // inv(1) == 1
+  GRD_KAT_ASSERT_EQ("inv(1)", GRDFieldInvHost(one), one);
+  // inv(2) * 2 == 1 (so inv(2) is the modular inverse of 2)
+  GRDUInt256x64 inv2 = GRDFieldInvHost(two);
+  GRD_KAT_ASSERT_EQ("inv(2)*2", GRDFieldMulHost(inv2, two), one);
+  // inv(p-1) * (p-1) == 1 (i.e. inv(-1) == -1)
+  GRDUInt256x64 inv_pm1 = GRDFieldInvHost(pm1);
+  GRD_KAT_ASSERT_EQ("inv(p-1)", inv_pm1, pm1);
+  // inv(p-1) * (p-1) == 1
+  GRD_KAT_ASSERT_EQ("inv(p-1)*(p-1)", GRDFieldMulHost(inv_pm1, pm1), one);
+}
+
 static void test_u128_arith(void) {
   GRDUInt128 a = {.lo = 0xFFFFFFFFFFFFFFFFull, .hi = 1ull};
   GRDUInt128 b = {.lo = 1, .hi = 0};
@@ -156,6 +173,7 @@ int main(void) {
   test_zero();
   test_p_boundary();
   test_mul_sqr();
+  test_inv();
   test_u128_parse();
   test_u128_arith();
 

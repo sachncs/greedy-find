@@ -261,6 +261,27 @@ GRDUInt256x64 GRDFieldSqrHost(GRDUInt256x64 a) {
   return GRDFieldMulHost(a, a);
 }
 
+GRDUInt256x64 GRDFieldInvHost(GRDUInt256x64 a) {
+  // Exponent = p - 2 =
+  //   0xFFFFFFFFFFFFFFFF FFFFFFFFFFFFFFFF FFFFFFFFFFFFFFFF FFFFFFFEFFFFFC2D
+  GRDUInt256x64 result = {{1, 0, 0, 0}};
+  GRDUInt256x64 base = a;
+  for (int i = 0; i < 256; ++i) {
+    const uint64_t kExpLo = 0xFFFFFFFEFFFFFC2Dul;
+    const uint64_t kExp1 = 0xFFFFFFFFFFFFFFFFul;
+    const uint64_t kExp2 = 0xFFFFFFFFFFFFFFFFul;
+    const uint64_t kExp3 = 0xFFFFFFFFFFFFFFFFul;
+    uint64_t bit;
+    if (i < 64) bit = (kExpLo >> i) & 1ul;
+    else if (i < 128) bit = (kExp1 >> (i - 64)) & 1ul;
+    else if (i < 192) bit = (kExp2 >> (i - 128)) & 1ul;
+    else bit = (kExp3 >> (i - 192)) & 1ul;
+    if (bit) result = GRDFieldMulHost(result, base);
+    if (i < 255) base = GRDFieldSqrHost(base);
+  }
+  return result;
+}
+
 // ----------------------------------------------------------------------------
 // Comparison / equality (host-side mirror of metal/secp256k1.metal)
 // ----------------------------------------------------------------------------
