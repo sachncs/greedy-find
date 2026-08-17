@@ -249,13 +249,28 @@ if(GRD_BUILD_BENCH)
   file(GLOB BENCH_SRC "${CMAKE_SOURCE_DIR}/bench/*.m")
   foreach(BENCH_FILE ${BENCH_SRC})
     get_filename_component(BENCH_NAME "${BENCH_FILE}" NAME_WE)
-    add_executable("${BENCH_NAME}" "${BENCH_FILE}")
+    add_executable("${BENCH_NAME}" "${BENCH_FILE}"
+      "${CMAKE_SOURCE_DIR}/host/ecc.c"
+      "${CMAKE_SOURCE_DIR}/host/hash.c"
+      "${CMAKE_SOURCE_DIR}/host/pubkey.m"
+      "${CMAKE_SOURCE_DIR}/host/address.m"
+      "${CMAKE_SOURCE_DIR}/host/sweep.m")
     target_include_directories("${BENCH_NAME}" PRIVATE
       "${CMAKE_SOURCE_DIR}/host"
+      /opt/homebrew/Cellar/secp256k1/0.8.0/include
+      /opt/homebrew/include
     )
     target_link_libraries("${BENCH_NAME}" PRIVATE
       ${FOUNDATION_FRAMEWORK}
       ${METAL_FRAMEWORK}
+    )
+    target_link_directories("${BENCH_NAME}" PRIVATE
+      /opt/homebrew/Cellar/secp256k1/0.8.0/lib
+      /opt/homebrew/lib
+    )
+    target_link_libraries("${BENCH_NAME}" PRIVATE
+      secp256k1
+      tomcrypt
     )
     target_compile_options("${BENCH_NAME}" PRIVATE ${GRD_WARN_FLAGS})
     add_dependencies("${BENCH_NAME}" greedy_metallib)
