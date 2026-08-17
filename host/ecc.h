@@ -74,6 +74,26 @@ bool GRDGte(GRDUInt256x64 a, GRDUInt256x64 b);
  */
 void GRDU256Hex(char *out, size_t out_len, GRDUInt256x64 a);
 
+// ----------------------------------------------------------------------------
+// EC point (mirrors metal/types.metal.h::EcPoint)
+// ----------------------------------------------------------------------------
+
+typedef struct {
+  GRDUInt256x64 X;
+  GRDUInt256x64 Y;
+  GRDUInt256x64 Z;
+} GRDEcPoint;
+
+extern const GRDEcPoint GRDSecp256k1G;
+
+GRDEcPoint GRDEcDoubleHost(GRDEcPoint p);
+GRDEcPoint GRDEcAddHost(GRDEcPoint p, GRDEcPoint q);
+GRDEcPoint GRDEcAddMixedHost(GRDEcPoint p, GRDEcPoint q);
+GRDEcPoint GRDEcNegHost(GRDEcPoint p);
+GRDUInt256x64 GRDReduceModNHost(GRDUInt256x64 a);
+GRDEcPoint GRDScalarMulHost(GRDEcPoint p, GRDUInt256x64 k);
+GRDEcPoint GRDScalarMulGHost(GRDUInt256x64 k);
+
 #ifdef __cplusplus
 }
 #endif
