@@ -1,14 +1,15 @@
 {
-  "machine": "M3 Pro (12-core CPU, 18-core GPU)",
+  "machine": "M-series (CPU path; Metal pipeline unavailable in this env)",
   "metal_toolchain": "metal3.0",
   "date": "2026-08-17",
-  "note": "Initial baseline; replace via scripts/record_baseline.sh. j_per_sec is the default-pass measurement from bench/sweep_bench.m at threadgroup=32, anchor_k=16, variants=512, range=2^14.",
+  "mode": "cpu",
+  "note": "Captured on a host where the Metal runtime cannot create compute pipelines (XPC_ERROR_CONNECTION_INTERRUPTED). The bench/sweep_bench JSON line is the regression-gate input. j_per_sec is measured on the CPU libsecp256k1 path (GRDRunPubkeySweepCPU in host/sweep.m) over a 2^14-j range with target G.x and no matches. To capture a GPU baseline on a real M-series host, run scripts/record_baseline.sh and the bench's mode field will switch to 'metal' automatically.",
   "bench": "sweep_bench",
   "tg": 32,
   "anchor_k": 16,
   "variants": 512,
   "range": 16384,
-  "j_per_sec": 0,
+  "j_per_sec": 109031,
   "ec_adds_per_sec": 0,
-  "wall_s": 0.0
+  "wall_s": 0.150269
 }
