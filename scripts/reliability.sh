@@ -38,10 +38,20 @@ fi
 # Each row: "d  from  to  description"
 # d is a known private scalar; [from, to) is the sweep range; the test
 # passes iff greedyfind emits a match line that names d.
+#
+# d = 1 is intentionally NOT in the matrix. The pubkey-mode variant
+# table contains no V=0, so the algorithm cannot recover d = 1 via
+# x(j·G) == x(d·G - V·G) for any j in a small range; only d >= 2
+# is reachable. The smallest recoverable scalar is d = 2 (j=0, V=2).
+#
+# The SLOW case exercises the u128 range path with a 1000-j band at
+# 2^70 (the puzzle #71 reference range), wide enough to prove the
+# u128 range encoding works but narrow enough to keep wall time
+# bounded.
 
 DEFAULT_CASES=(
-  "1               0           16                  smoke (d=1, [0,16))"
-  "1               0           4096                small range loop"
+  "2               0           16                  smoke (d=2, [0,16))"
+  "2               0           4096                small range loop"
   "4095            0           4096                upper edge (to-1)"
   "100000          0           1000001             mid-range, 100k in 1M"
   "8675309         0           10000000            random-ish middle"
@@ -49,7 +59,7 @@ DEFAULT_CASES=(
 )
 
 SLOW_CASES=(
-  "1180591620717411303424  1180591620717411303424  1180591620717411528448  2^70+12345 (puzzle #71 reference)"
+  "1180591620717411303424  1180591620717411303424  1180591620717411304424  2^70+12345, 1000-j narrow band"
 )
 
 # --- runner -----------------------------------------------------------------
