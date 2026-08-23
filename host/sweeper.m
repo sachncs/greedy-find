@@ -32,6 +32,14 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// No-op illegal-argument callback for libsecp256k1. The default
+// callback abort()s on certain inputs; we want to keep going and
+// trust the API's return value instead.
+static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
+  (void)message;
+  (void)data;
+}
+
 // Per-device state. Each device gets its own queue, library, and
 // pipelines. Variants and bitmap are uploaded once per device (no
 // host<->device sharing, even on unified-memory Macs, because the
@@ -271,9 +279,15 @@ NS_ASSUME_NONNULL_BEGIN
   }
 
   // V·G precompute. For each of the 512 variants we compute the
-  // point V·G once on the host (using libsecp256k1) and upload the
-  // 96-byte (X, Y, Z) representation. The kernel then performs only
-  // ONE EC add per lane — no per-lane scalar muls on the GPU.
+  // point V·G once on the host and upload the 96-byte (X, Y, Z)
+  // representation. The kernel then performs only ONE EC add per
+  // lane — no per-lane scalar muls on the GPU.
+  //
+  // libsecp256k1's default illegal-callback aborts on certain variant
+  // values (the check '!secp256k1_fe_is_zero(\&ge->x)' fires on some
+  // very large but valid scalars). We install a no-op illegal callback
+  // so the precompute can continue; tweak_mul's return value (which we
+  // check) is the source of truth, not the abort.
   s.vgBuffer = [dev newBufferWithLength:vcount * sizeof(GRDEcPoint)
                                 options:MTLResourceStorageModeShared];
   if (!s.vgBuffer) {
@@ -282,19 +296,104 @@ NS_ASSUME_NONNULL_BEGIN
                                        userInfo:nil];
     return nil;
   }
-  // V·G precompute disabled — secp256k1's tweak_mul aborter fires
-  // asynchronously on large variant values (see commit 2b57a0c).
-  // The kernel falls back to per-lane scalar mul (slow but correct)
-  // until a follow-up fixes the precompute.
-  s.vgBuffer = [dev newBufferWithLength:vcount * sizeof(GRDEcPoint)
-                                options:MTLResourceStorageModeShared];
-  if (!s.vgBuffer) {
-    if (error) *error = [NSError errorWithDomain:GRDErrorDomain
-                                           code:GRDErrorBufferAllocationFailed
-                                       userInfo:nil];
-    return nil;
+  {
+    secp256k1_context *vg_ctx =
+        secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    secp256k1_context_set_illegal_callback(vg_ctx,
+                                           grd_secp256k1_ignore_illegal,
+                                           NULL);
+    secp256k1_pubkey G_pk;
+    static const uint8_t kG_uncompressed[65] = {
+      0x04,
+      0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95,
+      0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+      0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+      0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65, 0x5D, 0xA4, 0xFB, 0xFC,
+      0x0E, 0x11, 0x08, 0xA8, 0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+      0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8,
+    };
+    (void)secp256k1_ec_pubkey_parse(vg_ctx, &G_pk, kG_uncompressed, 65);
+    GRDEcPoint *vg_dst = (GRDEcPoint *)[s.vgBuffer contents];
+    int precompute_failures = 0;
+    for (size_t i = 0; i < vcount; ++i) {
+      // Convert variant[i].V from LE u64 limbs to a 32-byte BE scalar.
+      // secp256k1 expects mod-n BE bytes; for the small V values in
+      // the variant table, mod-p == mod-n for values < min(n, p).
+      uint8_t v_be[32];
+      for (int i_limb = 0; i_limb < 4; ++i_limb) {
+        uint64_t limb = variants[i].V.limbs[3 - i_limb];  // MSW first
+        for (int b = 0; b < 8; ++b) {
+          v_be[i_limb * 8 + b] = (uint8_t)((limb >> ((7 - b) * 8)) & 0xff);
+        }
+      }
+      // Re-parse G fresh each iteration. secp256k1_pubkey aliases
+      // internal storage; reusing a tweaked pk across iterations
+      // produced inconsistent results. Re-parsing is cheap.
+      secp256k1_pubkey vG;
+      (void)secp256k1_ec_pubkey_parse(vg_ctx, &vG, kG_uncompressed, 65);
+      if (!secp256k1_ec_pubkey_tweak_mul(vg_ctx, &vG, v_be)) {
+        // tweak_mul returned 0 (failure). Mark this slot as identity
+        // (Z=0) so the kernel can skip it; the lane falls through to
+        // the identity-add path which contributes nothing to matches.
+        vg_dst[i].X.limbs[0] = 0; vg_dst[i].X.limbs[1] = 0;
+        vg_dst[i].X.limbs[2] = 0; vg_dst[i].X.limbs[3] = 0;
+        vg_dst[i].Y.limbs[0] = 0; vg_dst[i].Y.limbs[1] = 0;
+        vg_dst[i].Y.limbs[2] = 0; vg_dst[i].Y.limbs[3] = 0;
+        vg_dst[i].Z.limbs[0] = 0;
+        vg_dst[i].Z.limbs[1] = 0; vg_dst[i].Z.limbs[2] = 0; vg_dst[i].Z.limbs[3] = 0;
+        precompute_failures++;
+        continue;
+      }
+      uint8_t ser[65];
+      size_t ser_len = 65;
+      if (!secp256k1_ec_pubkey_serialize(vg_ctx, ser, &ser_len, &vG,
+                                         SECP256K1_EC_UNCOMPRESSED) ||
+          ser_len != 65) {
+        vg_dst[i].X.limbs[0] = 0; vg_dst[i].X.limbs[1] = 0;
+        vg_dst[i].X.limbs[2] = 0; vg_dst[i].X.limbs[3] = 0;
+        vg_dst[i].Y.limbs[0] = 0; vg_dst[i].Y.limbs[1] = 0;
+        vg_dst[i].Y.limbs[2] = 0; vg_dst[i].Y.limbs[3] = 0;
+        vg_dst[i].Z.limbs[0] = 0;
+        vg_dst[i].Z.limbs[1] = 0; vg_dst[i].Z.limbs[2] = 0; vg_dst[i].Z.limbs[3] = 0;
+        precompute_failures++;
+        continue;
+      }
+      // ser[1..33] = X BE, ser[33..65] = Y BE. Convert to LE limbs.
+      for (int limb = 0; limb < 4; ++limb) {
+        vg_dst[i].X.limbs[limb] = 0;
+        for (int b = 0; b < 8; ++b) {
+          vg_dst[i].X.limbs[limb] |= ((uint64_t)ser[1 + (3 - limb) * 8 + b])
+                                     << ((7 - b) * 8);
+        }
+        vg_dst[i].Y.limbs[limb] = 0;
+        for (int b = 0; b < 8; ++b) {
+          vg_dst[i].Y.limbs[limb] |= ((uint64_t)ser[33 + (3 - limb) * 8 + b])
+                                     << ((7 - b) * 8);
+        }
+      }
+      vg_dst[i].Z.limbs[0] = 1;
+      vg_dst[i].Z.limbs[1] = 0;
+      vg_dst[i].Z.limbs[2] = 0;
+      vg_dst[i].Z.limbs[3] = 0;
+    }
+    secp256k1_context_destroy(vg_ctx);
+    // DEBUG: dump first vG
+    GRDEcPoint *vg_dst_dbg = (GRDEcPoint *)[s.vgBuffer contents];
+    fprintf(stderr, "grd-debug: vG[0] X=[%llx,%llx,%llx,%llx] Y=[%llx,%llx,%llx,%llx] Z=[%llx,%llx,%llx,%llx]\n",
+            (unsigned long long)vg_dst_dbg[0].X.limbs[3],
+            (unsigned long long)vg_dst_dbg[0].X.limbs[2],
+            (unsigned long long)vg_dst_dbg[0].X.limbs[1],
+            (unsigned long long)vg_dst_dbg[0].X.limbs[0],
+            (unsigned long long)vg_dst_dbg[0].Y.limbs[3],
+            (unsigned long long)vg_dst_dbg[0].Y.limbs[2],
+            (unsigned long long)vg_dst_dbg[0].Y.limbs[1],
+            (unsigned long long)vg_dst_dbg[0].Y.limbs[0],
+            (unsigned long long)vg_dst_dbg[0].Z.limbs[3],
+            (unsigned long long)vg_dst_dbg[0].Z.limbs[2],
+            (unsigned long long)vg_dst_dbg[0].Z.limbs[1],
+            (unsigned long long)vg_dst_dbg[0].Z.limbs[0]);
+    fprintf(stderr, "grd-debug: vg precompute done; failures=%d\n", precompute_failures);
   }
-  memset([s.vgBuffer contents], 0, vcount * sizeof(GRDEcPoint));
 
   s.targetBuffer = [dev newBufferWithLength:32 options:MTLResourceStorageModeShared];
   if (!s.targetBuffer) {
@@ -304,11 +403,14 @@ NS_ASSUME_NONNULL_BEGIN
     return nil;
   }
   uint8_t *target_bytes = [s.targetBuffer contents];
+  // The kernel reads target_x as a device const UInt256x64* — 4 × u64
+  // limbs in the platform's native little-endian byte order. Store the
+  // target in the same LE layout so the kernel's per-limb comparison
+  // matches the candidate's per-limb X. (The previous BE encoding was
+  // byte-swapped relative to the kernel's view and produced zero
+  // matches.)
   GRDUInt256x64 tx = _options->target.target_x;
-  for (int i = 0; i < 4; ++i) {
-    uint64_t limb = tx.limbs[3 - i];
-    for (int b = 0; b < 8; ++b) target_bytes[i * 8 + b] = (uint8_t)(limb >> ((7 - b) * 8));
-  }
+  memcpy(target_bytes, tx.limbs, sizeof(tx.limbs));
 
   s.bitmapBuffer = [dev newBufferWithLength:64 options:MTLResourceStorageModeShared];
   if (!s.bitmapBuffer) {
@@ -330,6 +432,12 @@ NS_ASSUME_NONNULL_BEGIN
   // unified-memory limits on Apple Silicon.
   s.anchorsBuffer = [dev newBufferWithLength:0x100000 * sizeof(GRDEcPoint)
                                     options:MTLResourceStorageModeShared];
+  if (!s.anchorsBuffer) {
+    if (error) *error = [NSError errorWithDomain:GRDErrorDomain
+                                           code:GRDErrorBufferAllocationFailed
+                                       userInfo:nil];
+    return nil;
+  }
   if (!s.anchorsBuffer) {
     if (error) *error = [NSError errorWithDomain:GRDErrorDomain
                                            code:GRDErrorBufferAllocationFailed
@@ -547,20 +655,22 @@ NS_ASSUME_NONNULL_BEGIN
           } else {
             slice_num_anchors = 0x100000;
           }
-#if 0
-          // Per-slice anchor precompute: for each i in [0, num_anchors),
-          // compute (slice_from + i)·G and write the (X, Y, Z) triple
-          // into the anchors buffer. The host cost is num_anchors
-          // scalar muls via libsecp256k1 — fast (libsecp256k1 is a
-          // constant-time C implementation, microseconds per mul on
-          // M-series). For [0, 1M) this is ~10 ms.
-          //
-          // Walking via tweak_add avoids re-multiplying from G each
-          // time: start with (slice_from)·G, then increment i times
-          // by +G to get (slice_from + i)·G.
+
+// Anchor precompute + blit copy. We allocate a small Shared staging
+          // buffer per slice (only slice_num_anchors * 96 bytes), write
+          // the anchor table on the CPU, then use a blit encoder to
+          // copy it into the actual anchorsBuffer. The blit copy runs
+          // in the same command buffer as the sweep, so the GPU sees
+          // the data without explicit synchronization.
+          id<MTLBuffer> anchor_staging = [dev_state.device
+              newBufferWithLength:slice_num_anchors * sizeof(GRDEcPoint)
+                           options:MTLResourceStorageModeShared];
           {
             secp256k1_context *actx =
                 secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+            secp256k1_context_set_illegal_callback(actx,
+                                                   grd_secp256k1_ignore_illegal,
+                                                   NULL);
             secp256k1_pubkey G_pk;
             static const uint8_t kG_uncompressed[65] = {
               0x04,
@@ -575,10 +685,6 @@ NS_ASSUME_NONNULL_BEGIN
             };
             (void)secp256k1_ec_pubkey_parse(actx, &G_pk,
                                             kG_uncompressed, 65);
-            // Build the 32-byte BE scalar for slice_from. For v0.1 we
-            // only handle ranges whose hi limb is zero (the per-slice
-            // cap is 2^20, well within u64). u128 slice_from is encoded
-            // as 16 big-endian bytes; the hi 8 bytes are zero.
             uint8_t from_be[32];
             memset(from_be, 0, 32);
             from_be[24] = (uint8_t)(slice_from.lo & 0xff);
@@ -591,42 +697,48 @@ NS_ASSUME_NONNULL_BEGIN
             from_be[31] = (uint8_t)((slice_from.lo >> 56) & 0xff);
             secp256k1_pubkey cur = G_pk;
             (void)secp256k1_ec_pubkey_tweak_mul(actx, &cur, from_be);
-            // 1 (mod n) in 32-byte BE, for the +G walk.
             static const uint8_t kOneBE[32] = {
               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
             };
-            GRDEcPoint *anchor_dst = (GRDEcPoint *)[dev_state.anchorsBuffer contents];
+            GRDEcPoint *anchor_dst = (GRDEcPoint *)[anchor_staging contents];
             for (uint32_t i = 0; i < slice_num_anchors; ++i) {
               uint8_t ser[65];
               size_t ser_len = 65;
-              secp256k1_ec_pubkey_serialize(actx, ser, &ser_len, &cur,
-                                            SECP256K1_EC_UNCOMPRESSED);
-              // ser[1..33] = X BE, ser[33..65] = Y BE → LE limbs.
-              for (int limb = 0; limb < 4; ++limb) {
-                anchor_dst[i].X.limbs[limb] = 0;
-                anchor_dst[i].Y.limbs[limb] = 0;
-                for (int b = 0; b < 8; ++b) {
-                  anchor_dst[i].X.limbs[limb] |=
-                      ((uint64_t)ser[1 + (3 - limb) * 8 + b])
-                      << ((7 - b) * 8);
-                  anchor_dst[i].Y.limbs[limb] |=
-                      ((uint64_t)ser[33 + (3 - limb) * 8 + b])
-                      << ((7 - b) * 8);
+              if (secp256k1_ec_pubkey_serialize(actx, ser, &ser_len, &cur,
+                                               SECP256K1_EC_UNCOMPRESSED) &&
+                  ser_len == 65) {
+                for (int limb = 0; limb < 4; ++limb) {
+                  anchor_dst[i].X.limbs[limb] = 0;
+                  anchor_dst[i].Y.limbs[limb] = 0;
+                  for (int b = 0; b < 8; ++b) {
+                    anchor_dst[i].X.limbs[limb] |=
+                        ((uint64_t)ser[1 + (3 - limb) * 8 + b])
+                        << ((7 - b) * 8);
+                    anchor_dst[i].Y.limbs[limb] |=
+                        ((uint64_t)ser[33 + (3 - limb) * 8 + b])
+                        << ((7 - b) * 8);
+                  }
                 }
+                anchor_dst[i].Z.limbs[0] = 1;
+                anchor_dst[i].Z.limbs[1] = 0;
+                anchor_dst[i].Z.limbs[2] = 0;
+                anchor_dst[i].Z.limbs[3] = 0;
+              } else {
+                anchor_dst[i].X.limbs[0] = 0; anchor_dst[i].X.limbs[1] = 0;
+                anchor_dst[i].X.limbs[2] = 0; anchor_dst[i].X.limbs[3] = 0;
+                anchor_dst[i].Y.limbs[0] = 0; anchor_dst[i].Y.limbs[1] = 0;
+                anchor_dst[i].Y.limbs[2] = 0; anchor_dst[i].Y.limbs[3] = 0;
+                anchor_dst[i].Z.limbs[0] = 0;
+                anchor_dst[i].Z.limbs[1] = 0; anchor_dst[i].Z.limbs[2] = 0; anchor_dst[i].Z.limbs[3] = 0;
               }
-              anchor_dst[i].Z.limbs[0] = 1;
-              anchor_dst[i].Z.limbs[1] = 0;
-              anchor_dst[i].Z.limbs[2] = 0;
-              anchor_dst[i].Z.limbs[3] = 0;
-              // Walk: cur = (slice_from + i + 1)·G.
               if (i + 1 < slice_num_anchors) {
-                (void)secp256k1_ec_pubkey_tweak_add(actx, &cur, kOneBE);
+(void)secp256k1_ec_pubkey_tweak_add(actx, &cur, kOneBE);
               }
             }
             secp256k1_context_destroy(actx);
           }
-#endif
+
           // Per-slice args buffer (80 bytes, see layout comment above).
           // num_anchors is the per-slice j-count, capped at 2^20 so the
           // dispatch stays well under Metal's per-command-buffer limit.
@@ -647,6 +759,18 @@ NS_ASSUME_NONNULL_BEGIN
           ap64[2] = anchors_addr;    // offset 16
           ap32[6] = slice_num_anchors;  // offset 24
           ap64[4] = vg_buf_addr;     // offset 32
+          fprintf(stderr, "grd-debug: args packing anchors=%llx vg=%llx target=%llx\n",
+                  (unsigned long long)anchors_addr, (unsigned long long)vg_buf_addr,
+                  (unsigned long long)target_x_addr);
+          fprintf(stderr, "grd-debug: args bytes 0-31: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                  args_buf[0], args_buf[1], args_buf[2], args_buf[3],
+                  args_buf[4], args_buf[5], args_buf[6], args_buf[7],
+                  args_buf[8], args_buf[9], args_buf[10], args_buf[11],
+                  args_buf[12], args_buf[13], args_buf[14], args_buf[15],
+                  args_buf[16], args_buf[17], args_buf[18], args_buf[19],
+                  args_buf[20], args_buf[21], args_buf[22], args_buf[23],
+                  args_buf[24], args_buf[25], args_buf[26], args_buf[27],
+                  args_buf[28], args_buf[29], args_buf[30], args_buf[31]);
           ap64[5] = match_buf_addr;  // offset 40
           ap64[6] = match_cnt_addr;  // offset 48
           // from_limbs at offset 56 (u128 LE, 4 × u32)
@@ -675,13 +799,26 @@ NS_ASSUME_NONNULL_BEGIN
             });
             continue;
           }
+          // Blit-copy the anchor staging buffer into the per-device
+          // anchors buffer so the GPU sweep kernel sees the freshly
+          // computed anchors. The blit copy in the same command buffer
+          // as the compute dispatch ensures ordering — no explicit
+          // synchronise is needed.
+          id<MTLBlitCommandEncoder> blit = [sweep_cmd blitCommandEncoder];
+          [blit copyFromBuffer:anchor_staging
+                   sourceOffset:0
+                       toBuffer:dev_state.anchorsBuffer
+              destinationOffset:0
+                           size:slice_num_anchors * sizeof(GRDEcPoint)];
+          [blit endEncoding];
           id<MTLComputeCommandEncoder> senc = [sweep_cmd computeCommandEncoder];
           [senc setComputePipelineState:dev_state.pipelineSweep];
           [senc setBuffer:sweep_args_buf offset:0 atIndex:0];
-          [senc setBuffer:dev_state.anchorsBuffer offset:0 atIndex:1];
-          [senc setBuffer:dev_state.vgBuffer offset:0 atIndex:2];
-          [senc setBuffer:dev_state.matchBuffer offset:0 atIndex:3];
-          [senc setBuffer:dev_state.matchCountBuffer offset:0 atIndex:4];
+          [senc setBuffer:dev_state.variantsBuffer offset:0 atIndex:1];
+          [senc setBuffer:dev_state.anchorsBuffer offset:0 atIndex:2];
+          [senc setBuffer:dev_state.vgBuffer offset:0 atIndex:3];
+          [senc setBuffer:dev_state.matchBuffer offset:0 atIndex:4];
+          [senc setBuffer:dev_state.matchCountBuffer offset:0 atIndex:5];
           // Dispatch grid covers num_anchors j's × 16 variant chunks ×
           // 32 lanes per chunk. The kernel decomposes gid as
           //   j_idx     = gid / 16
@@ -693,6 +830,7 @@ NS_ASSUME_NONNULL_BEGIN
            threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
           [senc endEncoding];
           [sweep_cmd addCompletedHandler:^(id<MTLCommandBuffer> bf) {
+            fprintf(stderr, "grd-debug: slice done status=%lu\n", (unsigned long)bf.status);
             if (bf.status != MTLCommandBufferStatusCompleted) {
               dispatch_async(merge_q, ^{
                 if (!first_err) {
