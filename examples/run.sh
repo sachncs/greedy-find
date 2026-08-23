@@ -26,8 +26,11 @@ if [[ ! -x "${GRD}" ]]; then
 fi
 
 # --- --pubkey mode --------------------------------------------------------
-# Compressed pubkey for d=1: 02 || Gx.
-PUBKEY_HEX="0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"
+# Compressed pubkey for d=2: 02 || x(2G).
+# d=1 is not recoverable by the pubkey-mode algorithm because the
+# variant table contains no V=0; d=2 is the smallest recoverable
+# scalar (j=0, V=2, candidate = 0 + 2·G = 2·G).
+PUBKEY_HEX="02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
 
 PUBOUT="$(mktemp -t grd-smoke-pub.XXXXXX)"
 trap 'rm -f "${PUBOUT}" "${ADDOUT}"' EXIT
@@ -37,12 +40,12 @@ if ! "${GRD}" --pubkey "${PUBKEY_HEX}" --from 0 --to 16 >"${PUBOUT}" 2>&1; then
   cat "${PUBOUT}" >&2
   exit 1
 fi
-if ! grep -qE 'MATCH .* 1|privkey=1|privkey.=1|j=1[^0-9]' "${PUBOUT}"; then
-  printf "[smoke] --pubkey did not emit expected d=1 match:\n" >&2
+if ! grep -qE 'MATCH .* 2|privkey=2|privkey.=2|j=2[^0-9]' "${PUBOUT}"; then
+  printf "[smoke] --pubkey did not emit expected d=2 match:\n" >&2
   cat "${PUBOUT}" >&2
   exit 1
 fi
-printf "[smoke] --pubkey ok: d=1 found in [0, 16)\n"
+printf "[smoke] --pubkey ok: d=2 found in [0, 16)\n"
 
 # --- --address mode -------------------------------------------------------
 # P2PKH mainnet address for d=1:
