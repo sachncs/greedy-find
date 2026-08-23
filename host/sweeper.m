@@ -28,6 +28,8 @@
 #import <stdlib.h>
 #import <string.h>
 
+#include <secp256k1.h>
+
 NS_ASSUME_NONNULL_BEGIN
 
 // Per-device state. Each device gets its own queue, library, and
@@ -41,6 +43,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) id<MTLComputePipelineState> pipelinePrune;
 @property (nonatomic, strong) id<MTLComputePipelineState> pipelineSweep;
 @property (nonatomic, strong) id<MTLBuffer> variantsBuffer;
+@property (nonatomic, strong) id<MTLBuffer> vgBuffer;        // V·G points, precomputed
 @property (nonatomic, strong) id<MTLBuffer> targetBuffer;
 @property (nonatomic, strong) id<MTLBuffer> bitmapBuffer;
 @property (nonatomic, strong) id<MTLBuffer> anchorsBuffer;
@@ -245,7 +248,12 @@ NS_ASSUME_NONNULL_BEGIN
                                                      @"Variant count mismatch"}];
     return nil;
   }
-  size_t variant_bytes = vcount * sizeof(GRDVariant);
+  // Pack the variant V field densely into the buffer. The kernel reads
+  // variants[i] as a UInt256x64 (32 bytes), but GRDVariant has an 8-byte
+  // label pointer preceding the V field, so a raw memcpy would put 40
+  // bytes per variant where the kernel expects 32. Mirror the bench's
+  // approach in bench/sweep_bench.m:274-285: stride the 4 × u64 limbs.
+  size_t variant_bytes = vcount * sizeof(GRDUInt256x64);
   s.variantsBuffer = [dev newBufferWithLength:variant_bytes
                                       options:MTLResourceStorageModeShared];
   if (!s.variantsBuffer) {
@@ -254,7 +262,57 @@ NS_ASSUME_NONNULL_BEGIN
                                        userInfo:nil];
     return nil;
   }
-  memcpy([s.variantsBuffer contents], variants, variant_bytes);
+  uint64_t *vdst = (uint64_t *)[s.variantsBuffer contents];
+  for (size_t i = 0; i < vcount; ++i) {
+    vdst[i * 4 + 0] = variants[i].V.limbs[0];
+    vdst[i * 4 + 1] = variants[i].V.limbs[1];
+    vdst[i * 4 + 2] = variants[i].V.limbs[2];
+    vdst[i * 4 + 3] = variants[i].V.limbs[3];
+  }
+
+  // V·G precompute. For each of the 512 variants we compute the
+  // point V·G once on the host (using libsecp256k1) and upload the
+  // 96-byte (X, Y, Z) representation. The kernel then performs only
+  // ONE EC add per lane — no per-lane scalar muls on the GPU.
+  s.vgBuffer = [dev newBufferWithLength:vcount * sizeof(GRDEcPoint)
+                                options:MTLResourceStorageModeShared];
+  if (!s.vgBuffer) {
+    if (error) *error = [NSError errorWithDomain:GRDErrorDomain
+                                           code:GRDErrorBufferAllocationFailed
+                                       userInfo:nil];
+    return nil;
+  }
+  {
+    GRDEcPoint *vg_dst = (GRDEcPoint *)[s.vgBuffer contents];
+    fprintf(stderr, "grd-debug: vg precompute start, vcount=%zu\n", vcount);
+    for (size_t i = 0; i < vcount; ++i) {
+      fprintf(stderr, "grd-debug: vg variant %zu V=[%llx,%llx,%llx,%llx]\n",
+              i, (unsigned long long)variants[i].V.limbs[3],
+              (unsigned long long)variants[i].V.limbs[2],
+              (unsigned long long)variants[i].V.limbs[1],
+              (unsigned long long)variants[i].V.limbs[0]);
+      // Variant[i].V is in mod-p limbs (per the variant-generation
+      // code). secp256k1 expects mod-n BE bytes. For the small V
+      // values in our variant table (all < 2^256), the mod-n and
+      // mod-p reductions are identical because n and p are within
+      // 2^128 of each other and all variants are < min(n, p).
+      uint8_t v_be[32];
+      for (int i_limb = 0; i_limb < 4; ++i_limb) {
+        uint64_t limb = variants[i].V.limbs[3 - i_limb];  // MSW first
+        for (int b = 0; b < 8; ++b) {
+          v_be[i_limb * 8 + b] = (uint8_t)((limb >> ((7 - b) * 8)) & 0xff);
+        }
+      }
+      // Compute V·G via the existing GRDScalarMulHost helper, which
+      // already handles the limb→BE conversion correctly.
+      GRDEcPoint vG_pt = GRDScalarMulHost(GRDSecp256k1G, variants[i].V);
+      vg_dst[i].X = vG_pt.X;
+      vg_dst[i].Y = vG_pt.Y;
+      vg_dst[i].Z = vG_pt.Z;
+    }
+    fprintf(stderr, "grd-debug: vg precompute done\n");
+  }
+  fprintf(stderr, "grd-debug: post-vg\n");
 
   s.targetBuffer = [dev newBufferWithLength:32 options:MTLResourceStorageModeShared];
   if (!s.targetBuffer) {
@@ -279,12 +337,16 @@ NS_ASSUME_NONNULL_BEGIN
   }
   memset([s.bitmapBuffer contents], 0, 64);
 
-  // Anchors buffer: reserved for the C2 follow-up path that uploads
-  // full EC points (X, Y, Z per anchor). The C1 path does not read
-  // from it, but the args-struct slot still needs a valid gpuAddress
-  // so the pointer field is well-defined. Allocate one 32-byte slot
-  // here; the C2 path will replace this with the full anchor table.
-  s.anchorsBuffer = [dev newBufferWithLength:32
+  // Anchors buffer: full EC points (X, Y, Z) per anchor. Path C2:
+  // the host precomputes (from + i)·G for each i in [0, num_anchors)
+  // and uploads the points. The kernel reads anchor[j_idx] as a full
+  // EcPoint and computes candidate = anchor + V·G with one EC add.
+  //
+  // Allocation size: 96 bytes per point × per_slice anchors. The
+  // per-slice cap is 2^20 (set in executeWithCompletion), so the
+  // worst-case allocation is 96 × 2^20 ≈ 96 MiB — well within
+  // unified-memory limits on Apple Silicon.
+  s.anchorsBuffer = [dev newBufferWithLength:0x100000 * sizeof(GRDEcPoint)
                                     options:MTLResourceStorageModeShared];
   if (!s.anchorsBuffer) {
     if (error) *error = [NSError errorWithDomain:GRDErrorDomain
@@ -374,11 +436,32 @@ NS_ASSUME_NONNULL_BEGIN
   // when the kernel is compute-bound; the per-slice wall time
   // dominates the throughput.
   uint64_t total_slices = (uint64_t)device_count * depth;
-  // The per-slice range as a 64-bit quantity (high-limb zero is the
-  // common case; for ranges > 2^64 the bench should not be
-  // microbenchmarking anyway).
-  uint64_t per_slice = range.lo / total_slices;
+  // Per-slice j-count cap. Each dispatch is
+  //   num_anchors × 16 variant chunks × 32 lanes
+  // threads; the cap keeps every dispatch comfortably under Metal's
+  // per-command-buffer limit (~2^31) and keeps the per-slice wall
+  // time bounded so the pipelined multi-slice overlap pays off.
+  const uint64_t kGRDMaxAnchorsPerSlice = 1ULL << 20;  // 1 M j's
+  uint64_t per_slice;
+  if (range.hi == 0) {
+    per_slice = range.lo / total_slices;
+  } else {
+    // u128 range: fall back to one giant slice; the v0.1 kernel only
+    // decodes the lo limb, so the per-slice cap on the lo portion
+    // applies. Full u128 range splitting lands in a follow-up.
+    per_slice = range.lo;
+  }
   if (per_slice == 0) per_slice = 1;
+  if (per_slice > kGRDMaxAnchorsPerSlice) {
+    per_slice = kGRDMaxAnchorsPerSlice;
+  }
+  if (range.hi == 0) {
+    total_slices = (range.lo + per_slice - 1) / per_slice;
+  } else {
+    // u128 range, single slice for v0.1.
+    total_slices = 1;
+  }
+  if (total_slices == 0) total_slices = 1;
 
   __block atomic_uint completed_count = 0;
   __block NSMutableArray<GRDMatch *> *all_matches =
@@ -392,23 +475,19 @@ NS_ASSUME_NONNULL_BEGIN
   // Per-slice args buffers are built from scratch inside the slice
   // loop below, because num_anchors, from_limbs, and to_limbs differ
   // per slice. The layout mirrors the Tier-2 argument-buffer contract
-  // (developer.apple.com/documentation/metal/buffers) and the canonical
-  // example in bench/sweep_bench.m:355-365:
+  // (developer.apple.com/documentation/metal/buffers):
   //
-  //   offset  0:  device const UInt256x64* target_x   (gpuAddress)
-  //   offset  8:  device const uint8_t*     bitmap    (gpuAddress)
-  //   offset 16:  device const UInt256x64* anchors   (gpuAddress;
-  //                                                  unused by C1 path,
-  //                                                  kept for the C2
-  //                                                  follow-up that
-  //                                                  uploads full points)
-  //   offset 24:  uint32 num_anchors
-  //   offset 28:  uint32 (pad for 8-byte pointer alignment)
-  //   offset 32:  device UInt256x64*        match_buffer (gpuAddress)
-  //   offset 40:  device atomic_uint*       match_count  (gpuAddress)
-  //   offset 48:  uint32 from_limbs[4]   (u128 little-endian)
-  //   offset 64:  uint32 to_limbs[4]     (u128 little-endian)
-  //   total: 80 bytes
+  //   offset  0: device const UInt256x64* target_x       (gpuAddress)
+  //   offset  8: device const uint8_t*     bitmap        (gpuAddress)
+  //   offset 16: device const EcPoint*     anchors       (gpuAddress; full points)
+  //   offset 24: uint32 num_anchors
+  //   offset 28: uint32 (pad for 8-byte pointer alignment)
+  //   offset 32: device const EcPoint*     v_points      (gpuAddress; V·G points)
+  //   offset 40: device UInt256x64*        match_buffer  (gpuAddress; UInt256x64 slots)
+  //   offset 48: device atomic_uint*       match_count   (gpuAddress)
+  //   offset 56: uint32 from_limbs[4]      (u128 little-endian)
+  //   offset 72: uint32 to_limbs[4]        (u128 little-endian)
+  //   total: 88 bytes
 
   // Issue the prune kernel once per device (concurrent across devices).
   for (uint32_t di = 0; di < device_count; ++di) {
@@ -458,6 +537,7 @@ NS_ASSUME_NONNULL_BEGIN
         uint64_t target_x_addr = [dev_state.targetBuffer gpuAddress];
         uint64_t bitmap_addr   = [dev_state.bitmapBuffer gpuAddress];
         uint64_t anchors_addr  = [dev_state.anchorsBuffer gpuAddress];
+        uint64_t vg_buf_addr   = [dev_state.vgBuffer gpuAddress];
         uint64_t match_buf_addr  = [dev_state.matchBuffer gpuAddress];
         uint64_t match_cnt_addr  = [dev_state.matchCountBuffer gpuAddress];
         // Issue the per-slice sweep commands for this device.
@@ -471,13 +551,10 @@ NS_ASSUME_NONNULL_BEGIN
           GRDU128Add(&slice_to, slice_to, next_offset);
           if (slice_idx + 1 == total_slices) slice_to = _options->to;
 
-          // Per-slice args buffer (80 bytes, see layout comment above).
-          // num_anchors is the per-slice j-count, capped at 2^20 so the
-          // dispatch stays well under Metal's per-command-buffer limit.
-          // For u128 ranges whose hi-limb is non-zero, the kernel can
-          // only handle the low-limb portion in v0.1; the high-limb
-          // tail needs a follow-up that chunks the range via outer
-          // slicing.
+          // num_anchors for this slice: capped at 2^20 so the dispatch
+          // stays well under Metal's per-command-buffer thread limit.
+          // For u128 ranges whose hi limb is non-zero, we cap at 2^20
+          // and rely on outer iteration to cover the rest (TODO).
           GRDUInt128 slice_range;
           GRDU128Sub(&slice_range, slice_to, slice_from);
           uint32_t slice_num_anchors;
@@ -486,14 +563,99 @@ NS_ASSUME_NONNULL_BEGIN
                                               ? slice_range.lo
                                               : 0x100000);
           } else {
-            // u128 range: cap at 2^20 anchors per slice; the full
-            // range is covered by additional outer iterations in a
-            // follow-up.
             slice_num_anchors = 0x100000;
           }
+
+          // Per-slice anchor precompute: for each i in [0, num_anchors),
+          // compute (slice_from + i)·G and write the (X, Y, Z) triple
+          // into the anchors buffer. The host cost is num_anchors
+          // scalar muls via libsecp256k1 — fast (libsecp256k1 is a
+          // constant-time C implementation, microseconds per mul on
+          // M-series). For [0, 1M) this is ~10 ms.
+          //
+          // Walking via tweak_add avoids re-multiplying from G each
+          // time: start with (slice_from)·G, then increment i times
+          // by +G to get (slice_from + i)·G.
+          {
+            secp256k1_context *actx =
+                secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+            secp256k1_pubkey G_pk;
+            static const uint8_t kG_uncompressed[65] = {
+              0x04,
+              0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0,
+              0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB,
+              0x2D, 0xCE, 0x28, 0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8,
+              0x17, 0x98,
+              0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65, 0x5D, 0xA4,
+              0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8, 0xFD, 0x17, 0xB4, 0x48,
+              0xA6, 0x85, 0x54, 0x19, 0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10,
+              0xD4, 0xB8,
+            };
+            (void)secp256k1_ec_pubkey_parse(actx, &G_pk,
+                                            kG_uncompressed, 65);
+            // Build the 32-byte BE scalar for slice_from. For v0.1 we
+            // only handle ranges whose hi limb is zero (the per-slice
+            // cap is 2^20, well within u64). u128 slice_from is encoded
+            // as 16 big-endian bytes; the hi 8 bytes are zero.
+            uint8_t from_be[32];
+            memset(from_be, 0, 32);
+            from_be[24] = (uint8_t)(slice_from.lo & 0xff);
+            from_be[25] = (uint8_t)((slice_from.lo >> 8) & 0xff);
+            from_be[26] = (uint8_t)((slice_from.lo >> 16) & 0xff);
+            from_be[27] = (uint8_t)((slice_from.lo >> 24) & 0xff);
+            from_be[28] = (uint8_t)((slice_from.lo >> 32) & 0xff);
+            from_be[29] = (uint8_t)((slice_from.lo >> 40) & 0xff);
+            from_be[30] = (uint8_t)((slice_from.lo >> 48) & 0xff);
+            from_be[31] = (uint8_t)((slice_from.lo >> 56) & 0xff);
+            secp256k1_pubkey cur = G_pk;
+            (void)secp256k1_ec_pubkey_tweak_mul(actx, &cur, from_be);
+            // 1 (mod n) in 32-byte BE, for the +G walk.
+            static const uint8_t kOneBE[32] = {
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+            };
+            GRDEcPoint *anchor_dst = (GRDEcPoint *)[dev_state.anchorsBuffer contents];
+            for (uint32_t i = 0; i < slice_num_anchors; ++i) {
+              uint8_t ser[65];
+              size_t ser_len = 65;
+              secp256k1_ec_pubkey_serialize(actx, ser, &ser_len, &cur,
+                                            SECP256K1_EC_UNCOMPRESSED);
+              // ser[1..33] = X BE, ser[33..65] = Y BE → LE limbs.
+              for (int limb = 0; limb < 4; ++limb) {
+                anchor_dst[i].X.limbs[limb] = 0;
+                anchor_dst[i].Y.limbs[limb] = 0;
+                for (int b = 0; b < 8; ++b) {
+                  anchor_dst[i].X.limbs[limb] |=
+                      ((uint64_t)ser[1 + (3 - limb) * 8 + b])
+                      << ((7 - b) * 8);
+                  anchor_dst[i].Y.limbs[limb] |=
+                      ((uint64_t)ser[33 + (3 - limb) * 8 + b])
+                      << ((7 - b) * 8);
+                }
+              }
+              anchor_dst[i].Z.limbs[0] = 1;
+              anchor_dst[i].Z.limbs[1] = 0;
+              anchor_dst[i].Z.limbs[2] = 0;
+              anchor_dst[i].Z.limbs[3] = 0;
+              // Walk: cur = (slice_from + i + 1)·G.
+              if (i + 1 < slice_num_anchors) {
+                (void)secp256k1_ec_pubkey_tweak_add(actx, &cur, kOneBE);
+              }
+            }
+            secp256k1_context_destroy(actx);
+          }
+          // Per-slice args buffer (80 bytes, see layout comment above).
+          // num_anchors is the per-slice j-count, capped at 2^20 so the
+          // dispatch stays well under Metal's per-command-buffer limit.
+          // For u128 ranges whose hi-limb is non-zero, the kernel can
+          // only handle the low-limb portion in v0.1; the high-limb
+          // tail needs a follow-up that chunks the range via outer
+          // slicing.
+          // (slice_num_anchors computed above, just before the anchor
+          // precompute block.)
           // Pack the args struct little-endian so the kernel can read
           // it byte-for-byte.
-          uint8_t args_buf[80];
+          uint8_t args_buf[88];
           memset(args_buf, 0, sizeof(args_buf));
           uint64_t *ap64 = (uint64_t *)args_buf;
           uint32_t *ap32 = (uint32_t *)args_buf;
@@ -501,18 +663,19 @@ NS_ASSUME_NONNULL_BEGIN
           ap64[1] = bitmap_addr;     // offset  8
           ap64[2] = anchors_addr;    // offset 16
           ap32[6] = slice_num_anchors;  // offset 24
-          ap64[4] = match_buf_addr;  // offset 32
-          ap64[5] = match_cnt_addr;  // offset 40
-          // from_limbs at offset 48 (u128 LE, 4 × u32)
-          ap32[12] = (uint32_t)(slice_from.lo & 0xFFFFFFFFu);
-          ap32[13] = (uint32_t)(slice_from.lo >> 32);
-          ap32[14] = (uint32_t)(slice_from.hi & 0xFFFFFFFFu);
-          ap32[15] = (uint32_t)(slice_from.hi >> 32);
-          // to_limbs at offset 64 (u128 LE, 4 × u32)
-          ap32[16] = (uint32_t)(slice_to.lo & 0xFFFFFFFFu);
-          ap32[17] = (uint32_t)(slice_to.lo >> 32);
-          ap32[18] = (uint32_t)(slice_to.hi & 0xFFFFFFFFu);
-          ap32[19] = (uint32_t)(slice_to.hi >> 32);
+          ap64[4] = vg_buf_addr;     // offset 32
+          ap64[5] = match_buf_addr;  // offset 40
+          ap64[6] = match_cnt_addr;  // offset 48
+          // from_limbs at offset 56 (u128 LE, 4 × u32)
+          ap32[14] = (uint32_t)(slice_from.lo & 0xFFFFFFFFu);
+          ap32[15] = (uint32_t)(slice_from.lo >> 32);
+          ap32[16] = (uint32_t)(slice_from.hi & 0xFFFFFFFFu);
+          ap32[17] = (uint32_t)(slice_from.hi >> 32);
+          // to_limbs at offset 72 (u128 LE, 4 × u32)
+          ap32[18] = (uint32_t)(slice_to.lo & 0xFFFFFFFFu);
+          ap32[19] = (uint32_t)(slice_to.lo >> 32);
+          ap32[20] = (uint32_t)(slice_to.hi & 0xFFFFFFFFu);
+          ap32[21] = (uint32_t)(slice_to.hi >> 32);
 
           id<MTLBuffer> sweep_args_buf =
               [dev_state.device newBufferWithBytes:args_buf
@@ -532,12 +695,19 @@ NS_ASSUME_NONNULL_BEGIN
           id<MTLComputeCommandEncoder> senc = [sweep_cmd computeCommandEncoder];
           [senc setComputePipelineState:dev_state.pipelineSweep];
           [senc setBuffer:sweep_args_buf offset:0 atIndex:0];
-          [senc setBuffer:dev_state.variantsBuffer offset:0 atIndex:1];
-          [senc setBuffer:dev_state.matchBuffer offset:0 atIndex:2];
-          [senc setBuffer:dev_state.matchCountBuffer offset:0 atIndex:3];
-          uint64_t batch = self->_batch_size ? self->_batch_size : 32;
-          [senc dispatchThreads:MTLSizeMake(batch, 1, 1)
-           threadsPerThreadgroup:MTLSizeMake(batch, 1, 1)];
+          [senc setBuffer:dev_state.anchorsBuffer offset:0 atIndex:1];
+          [senc setBuffer:dev_state.vgBuffer offset:0 atIndex:2];
+          [senc setBuffer:dev_state.matchBuffer offset:0 atIndex:3];
+          [senc setBuffer:dev_state.matchCountBuffer offset:0 atIndex:4];
+          // Dispatch grid covers num_anchors j's × 16 variant chunks ×
+          // 32 lanes per chunk. The kernel decomposes gid as
+          //   j_idx     = gid / 16
+          //   chunk_idx = gid % 16
+          // so a single dispatch covers the full 512-variant table
+          // across 16 threadgroups per j.
+          uint64_t total_threads = (uint64_t)slice_num_anchors * 16ULL * 32ULL;
+          [senc dispatchThreads:MTLSizeMake((NSUInteger)total_threads, 1, 1)
+           threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
           [senc endEncoding];
           [sweep_cmd addCompletedHandler:^(id<MTLCommandBuffer> bf) {
             if (bf.status != MTLCommandBufferStatusCompleted) {

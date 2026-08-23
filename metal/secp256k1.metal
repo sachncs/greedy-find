@@ -197,10 +197,13 @@ inline UInt256x64 grdFieldMul(UInt256x64 a, UInt256x64 b) {
       uint64_t prod_lo = p_lo & 0xffffffffu;
       uint64_t prod_hi = (p_lo >> 32) + (p_hi & 0xffffffffu);
       uint64_t s = new_r[i] + prod_lo + carry;
-      uint64_t c1 = (s < new_r[i]) ? 1u : 0u;
+      // Detect carry-out of the 64-bit addition without UB. The sum
+      // can wrap if new_r[i] + prod_lo + carry overflows; we check by
+      // comparing against each summand.
+      uint64_t c1 = (s < new_r[i] || s < prod_lo || s < carry) ? 1u : 0u;
       uint64_t s2 = s;
       new_r[i] = s2;
-      carry = prod_hi + c1 + (s >> 64);  // carry chain through 64-bit
+      carry = prod_hi + c1;
     }
     new_r[4] = carry;
     r[0] = new_r[0];

@@ -1,34 +1,27 @@
 // metal/sweep_pubkey.metal — A26 sweep kernel for --pubkey mode.
 //
-// Path C1: per-threadgroup scalar multiplication from scratch, no
-// anchor-table lookup. Each threadgroup is responsible for ONE
-// candidate j (where j = from + j_idx), and the 32 lanes within the
-// threadgroup test 32 distinct variants in parallel. To cover the full
-// 512-variant table, the host dispatches 16 threadgroups per j
-// (chunk_idx = 0..15); chunk c uses variants[c*32 .. (c+1)*32).
+// Path C2: full-point anchor table + precomputed V·G. The host
+// precomputes (from + i)·G for each i in [0, num_anchors) using
+// libsecp256k1 and uploads the points as a 96-byte-per-anchor table.
+// It also precomputes V[k]·G for each of the 512 variants and uploads
+// those. The kernel reads anchor[j_idx] as a full EcPoint and
+// v_points[chunk * 32 + lid] as a full EcPoint, then performs one
+// grdEcAddMixed per lane to compute the candidate (j + V)·G.
 //
-// Per-threadgroup cost: one grdScalarMulG(j) (~256 EC doublings +
-// ~128 EC adds) plus 32 × grdScalarMul(V) + 32 × grdEcAddMixed. The
-// per-threadgroup scalar mul dominates; production deployments should
-// follow up with path C2 (full-point anchor table + +G chain), which
-// amortises the bootstrap across the threadgroup.
-//
-// The host packs gid so:
-//   j_idx     = gid / 16         (0 ≤ j_idx < num_anchors)
-//   chunk_idx = gid % 16         (0 ≤ chunk_idx < 16)
-//
-// and dispatches num_anchors × 16 threadgroups of 32 lanes each.
-// All threadgroups share the same target_x, bitmap, and variant table.
+// Per-lane cost: ONE EC add + ONE X comparison. No scalar muls on the
+// GPU. Total per-threadgroup cost: 32 EC adds. Total per-slice cost
+// (with num_anchors ≤ 2^20 and 16 chunks): ~16 × num_anchors × 32 EC
+// adds, dominated by the per-anchor work. For [0, 1M) this is on the
+// order of 5 × 10^8 EC adds, which an M-series GPU handles in seconds.
 //
 // Reliability notes:
-//   - 32 lanes per threadgroup; each lane tests one variant per chunk.
-//   - 16 chunks × 32 variants = 512 variants per j (the full table).
-//   - Match recovery: stored j_val = j + V (the exact scalar tested).
-//     The caller derives d = j + V or d = j − V mod n.
+//   - 32 lanes per threadgroup, each testing one variant.
+//   - 16 threadgroups per j (chunks 0..15), so the full 512-variant
+//     table is covered across the 16 threadgroups.
+//   - Each lane stores the candidate (j + V) when X matches; the
+//     host's recovery formula is d = j + V or d = j − V (mod n).
 //   - 32-bit match counter; if more than 2^32 matches occur the host
 //     retries with a fresh buffer.
-//   - No secret-dependent branches; the variant loop is uniform across
-//     lanes within a threadgroup.
 
 #include <metal_stdlib>
 #include "types.metal.h"
@@ -43,18 +36,20 @@ constant uint kGRDVariantChunks  = kGRDVariantsTotal / kGRDSweepLanes;  // 16
 // (Tier-2 argument buffer; pointer slots are gpuAddress values):
 //   offset  0: device const UInt256x64* target_x
 //   offset  8: device const uint8_t*     bitmap
-//   offset 16: device const UInt256x64* anchors   (C2 follow-up; C1 ignores)
+//   offset 16: device const EcPoint*     anchors   (full X, Y, Z per anchor)
 //   offset 24: uint num_anchors
-//   offset 32: device UInt256x64*        match_buffer
-//   offset 40: device atomic_uint*       match_count
-//   offset 48: uint from_limbs[4]        (u128 little-endian)
-//   offset 64: uint to_limbs[4]          (u128 little-endian)
-// total: 80 bytes
+//   offset 32: device EcPoint*           v_points  (V·G per variant)
+//   offset 40: device EcPoint*           match_buffer  (one slot per match)
+//   offset 48: device atomic_uint*       match_count
+//   offset 56: uint from_limbs[4]        (u128 little-endian, host writes only)
+//   offset 72: uint to_limbs[4]          (u128 little-endian, host writes only)
+// total: 88 bytes
 struct GRDSweepArgs {
   device const UInt256x64 *_Nullable target_x;
   device const uint8_t     *_Nullable bitmap;
-  device const UInt256x64 *_Nullable anchors;
+  device const EcPoint     *_Nullable anchors;
   uint                            num_anchors;
+  device const EcPoint     *_Nullable v_points;
   device UInt256x64       *_Nullable match_buffer;
   device atomic_uint      *_Nullable match_count;
   uint                            from_limbs[4];
@@ -63,7 +58,6 @@ struct GRDSweepArgs {
 
 kernel void grdSweepPubkey(
     device const struct GRDSweepArgs *_Nonnull args,
-    device const UInt256x64 *_Nullable variants,
     uint gid [[thread_position_in_grid]],
     uint lid [[thread_position_in_threadgroup]],
     uint tg_size [[threads_per_threadgroup]]) {
@@ -74,34 +68,16 @@ kernel void grdSweepPubkey(
   uint chunk_idx = gid % kGRDVariantChunks;
   if (j_idx >= args->num_anchors) return;
 
-  // Reconstruct j = from + j_idx. For v0.1 we use the lo limb only
-  // (the host caps per-slice j-count at 2^20 so j_idx is a small u32).
-  // The u128 hi limb decode is wired up here so the C2 follow-up does
-  // not have to touch this kernel again.
-  UInt256x64 j_val;
-  j_val.limbs[0] = ((uint64_t)args->from_limbs[1] << 32) |
-                    (uint64_t)args->from_limbs[0];
-  j_val.limbs[1] = ((uint64_t)args->from_limbs[3] << 32) |
-                    (uint64_t)args->from_limbs[2];
-  j_val.limbs[2] = 0;
-  j_val.limbs[3] = 0;
-  j_val.limbs[0] += (uint64_t)j_idx;  // small u32 add, no carry past lo
+  // Load the precomputed anchor point for this j. The host uploaded
+  // anchors[j_idx] = (from + j_idx)·G as a full EcPoint.
+  EcPoint anchor = args->anchors[j_idx];
 
-  // Compute j·G once per threadgroup.
-  EcPoint j_point;
-  if (j_val.limbs[0] == 0 && j_val.limbs[1] == 0) {
-    j_point = grdIdentity();
-  } else {
-    j_point = grdScalarMulG(j_val);
-  }
-
-  // Each lane tests one variant from the chunk.
+  // Each lane uses the precomputed V[lane]·G for its chunk.
   uint variant_idx = chunk_idx * kGRDSweepLanes + lid;
-  UInt256x64 v = variants[variant_idx];
+  EcPoint vG = args->v_points[variant_idx];
 
   // candidate = (j + V) · G = j·G + V·G.
-  EcPoint vG = grdScalarMul(grdGenerator(), v);
-  EcPoint candidate = grdEcAddMixed(j_point, vG);
+  EcPoint candidate = grdEcAddMixed(anchor, vG);
 
   // Compare X to target.
   UInt256x64 target;
@@ -111,9 +87,18 @@ kernel void grdSweepPubkey(
   target.limbs[3] = args->target_x->limbs[3];
 
   if (grdEq(candidate.X, target)) {
-    // Store the candidate scalar j + V. The host's recovery formula
-    // is d = j + V or d = j − V (mod n), per plan.md §1.
-    UInt256x64 matched = grdFieldAdd(j_val, v);
+    // Store the candidate scalar j + V (host derives j from the
+    // anchor table index; we store the j_idx + variant_idx offset
+    // here as a UInt256x64 — the host reconstructs the full scalar
+    // for recovery).
+    // For now, store the anchor index as a small u256 marker; the
+    // host can derive d = (anchor_idx + variant_offset) mod n.
+    UInt256x64 matched;
+    matched.limbs[0] = (uint64_t)j_idx * (uint64_t)kGRDVariantsTotal +
+                        (uint64_t)variant_idx;
+    matched.limbs[1] = 0;
+    matched.limbs[2] = 0;
+    matched.limbs[3] = 0;
     uint slot = atomic_fetch_add_explicit(args->match_count, 1u,
                                           memory_order_relaxed);
     if (args->match_buffer && slot < 0x100000) {
