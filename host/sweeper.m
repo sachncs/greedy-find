@@ -43,6 +43,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) id<MTLBuffer> variantsBuffer;
 @property (nonatomic, strong) id<MTLBuffer> targetBuffer;
 @property (nonatomic, strong) id<MTLBuffer> bitmapBuffer;
+@property (nonatomic, strong) id<MTLBuffer> anchorsBuffer;
 @property (nonatomic, strong) id<MTLBuffer> matchBuffer;
 @property (nonatomic, strong) id<MTLBuffer> matchCountBuffer;
 @property (nonatomic, assign) uint64_t j_per_sec;  // last measured
@@ -278,6 +279,20 @@ NS_ASSUME_NONNULL_BEGIN
   }
   memset([s.bitmapBuffer contents], 0, 64);
 
+  // Anchors buffer: reserved for the C2 follow-up path that uploads
+  // full EC points (X, Y, Z per anchor). The C1 path does not read
+  // from it, but the args-struct slot still needs a valid gpuAddress
+  // so the pointer field is well-defined. Allocate one 32-byte slot
+  // here; the C2 path will replace this with the full anchor table.
+  s.anchorsBuffer = [dev newBufferWithLength:32
+                                    options:MTLResourceStorageModeShared];
+  if (!s.anchorsBuffer) {
+    if (error) *error = [NSError errorWithDomain:GRDErrorDomain
+                                           code:GRDErrorBufferAllocationFailed
+                                       userInfo:nil];
+    return nil;
+  }
+
   // Match buffer: 256 slots per device. With N devices, the global
   // match pool is N × 256.
   s.matchBuffer = [dev newBufferWithLength:256 * sizeof(GRDUInt256x64)
@@ -374,25 +389,26 @@ NS_ASSUME_NONNULL_BEGIN
   dispatch_queue_t merge_q = dispatch_queue_create("com.greedyfind.sweeper.merge",
                                                   DISPATCH_QUEUE_SERIAL);
 
-  // Build sweep args (the same for every slice). The host precomputes
-  // these on _prep_queue so device work doesn't wait for it.
-  GRDUInt256x64 tx = _options->target.target_x;
-  size_t args_len = 32 + 64 + 4 + 4 + 4 + 4 + 4 + 4;
-  NSData *args_template_data = [NSMutableData dataWithLength:args_len];
-  uint8_t *p = (uint8_t *)args_template_data.bytes;
-  for (int i = 0; i < 4; ++i) {
-    uint64_t limb = tx.limbs[3 - i];
-    for (int b = 0; b < 8; ++b) p[i * 8 + b] = (uint8_t)(limb >> ((7 - b) * 8));
-  }
-  p += 32;
-  memset(p, 0, 64); p += 64;
-  *(uint32_t *)p = 0; p += 4;
-  *(uint64_t *)p = 0; p += 8;
-  *(uint32_t *)p = 0; p += 4;
-  *(uint32_t *)p = 0; p += 4;
-  *(uint32_t *)p = 0; p += 4;
-  *(uint32_t *)p = 0; p += 4;
-  *(uint32_t *)p = 0; p += 4;
+  // Per-slice args buffers are built from scratch inside the slice
+  // loop below, because num_anchors, from_limbs, and to_limbs differ
+  // per slice. The layout mirrors the Tier-2 argument-buffer contract
+  // (developer.apple.com/documentation/metal/buffers) and the canonical
+  // example in bench/sweep_bench.m:355-365:
+  //
+  //   offset  0:  device const UInt256x64* target_x   (gpuAddress)
+  //   offset  8:  device const uint8_t*     bitmap    (gpuAddress)
+  //   offset 16:  device const UInt256x64* anchors   (gpuAddress;
+  //                                                  unused by C1 path,
+  //                                                  kept for the C2
+  //                                                  follow-up that
+  //                                                  uploads full points)
+  //   offset 24:  uint32 num_anchors
+  //   offset 28:  uint32 (pad for 8-byte pointer alignment)
+  //   offset 32:  device UInt256x64*        match_buffer (gpuAddress)
+  //   offset 40:  device atomic_uint*       match_count  (gpuAddress)
+  //   offset 48:  uint32 from_limbs[4]   (u128 little-endian)
+  //   offset 64:  uint32 to_limbs[4]     (u128 little-endian)
+  //   total: 80 bytes
 
   // Issue the prune kernel once per device (concurrent across devices).
   for (uint32_t di = 0; di < device_count; ++di) {
@@ -436,6 +452,14 @@ NS_ASSUME_NONNULL_BEGIN
         }
         // Reset the per-device match counter.
         *(uint32_t *)[dev_state.matchCountBuffer contents] = 0;
+        // Per-device gpuAddress values for the constant pointers.
+        // The match_buffer / match_count / target / bitmap / anchors
+        // addresses are stable across slices, so we cache them here.
+        uint64_t target_x_addr = [dev_state.targetBuffer gpuAddress];
+        uint64_t bitmap_addr   = [dev_state.bitmapBuffer gpuAddress];
+        uint64_t anchors_addr  = [dev_state.anchorsBuffer gpuAddress];
+        uint64_t match_buf_addr  = [dev_state.matchBuffer gpuAddress];
+        uint64_t match_cnt_addr  = [dev_state.matchCountBuffer gpuAddress];
         // Issue the per-slice sweep commands for this device.
         for (uint32_t s = 0; s < depth; ++s) {
           uint64_t slice_idx = (uint64_t)di * depth + s;
@@ -447,18 +471,52 @@ NS_ASSUME_NONNULL_BEGIN
           GRDU128Add(&slice_to, slice_to, next_offset);
           if (slice_idx + 1 == total_slices) slice_to = _options->to;
 
-          // Per-slice args buffer.
-          NSMutableData *slice_args = [args_template_data mutableCopy];
-          uint8_t *sp = slice_args.mutableBytes;
-          sp += 32 + 64 + 4 + 8 + 4;
-          *(uint32_t *)sp = (uint32_t)slice_from.lo; sp += 4;
-          *(uint32_t *)sp = (uint32_t)slice_from.hi; sp += 4;
-          *(uint32_t *)sp = (uint32_t)slice_to.lo; sp += 4;
-          *(uint32_t *)sp = (uint32_t)slice_to.hi; sp += 4;
+          // Per-slice args buffer (80 bytes, see layout comment above).
+          // num_anchors is the per-slice j-count, capped at 2^20 so the
+          // dispatch stays well under Metal's per-command-buffer limit.
+          // For u128 ranges whose hi-limb is non-zero, the kernel can
+          // only handle the low-limb portion in v0.1; the high-limb
+          // tail needs a follow-up that chunks the range via outer
+          // slicing.
+          GRDUInt128 slice_range;
+          GRDU128Sub(&slice_range, slice_to, slice_from);
+          uint32_t slice_num_anchors;
+          if (slice_range.hi == 0) {
+            slice_num_anchors = (uint32_t)(slice_range.lo < 0x100000
+                                              ? slice_range.lo
+                                              : 0x100000);
+          } else {
+            // u128 range: cap at 2^20 anchors per slice; the full
+            // range is covered by additional outer iterations in a
+            // follow-up.
+            slice_num_anchors = 0x100000;
+          }
+          // Pack the args struct little-endian so the kernel can read
+          // it byte-for-byte.
+          uint8_t args_buf[80];
+          memset(args_buf, 0, sizeof(args_buf));
+          uint64_t *ap64 = (uint64_t *)args_buf;
+          uint32_t *ap32 = (uint32_t *)args_buf;
+          ap64[0] = target_x_addr;   // offset  0
+          ap64[1] = bitmap_addr;     // offset  8
+          ap64[2] = anchors_addr;    // offset 16
+          ap32[6] = slice_num_anchors;  // offset 24
+          ap64[4] = match_buf_addr;  // offset 32
+          ap64[5] = match_cnt_addr;  // offset 40
+          // from_limbs at offset 48 (u128 LE, 4 × u32)
+          ap32[12] = (uint32_t)(slice_from.lo & 0xFFFFFFFFu);
+          ap32[13] = (uint32_t)(slice_from.lo >> 32);
+          ap32[14] = (uint32_t)(slice_from.hi & 0xFFFFFFFFu);
+          ap32[15] = (uint32_t)(slice_from.hi >> 32);
+          // to_limbs at offset 64 (u128 LE, 4 × u32)
+          ap32[16] = (uint32_t)(slice_to.lo & 0xFFFFFFFFu);
+          ap32[17] = (uint32_t)(slice_to.lo >> 32);
+          ap32[18] = (uint32_t)(slice_to.hi & 0xFFFFFFFFu);
+          ap32[19] = (uint32_t)(slice_to.hi >> 32);
 
           id<MTLBuffer> sweep_args_buf =
-              [dev_state.device newBufferWithBytes:slice_args.bytes
-                                            length:slice_args.length
+              [dev_state.device newBufferWithBytes:args_buf
+                                            length:sizeof(args_buf)
                                            options:MTLResourceStorageModeShared];
           id<MTLCommandBuffer> sweep_cmd = [dev_state.queue commandBuffer];
           if (!sweep_cmd) {
