@@ -243,6 +243,31 @@ file(GLOB KAT_SRC
 endif()
 
 # ----------------------------------------------------------------------------
+# Tools
+# ----------------------------------------------------------------------------
+# Standalone helper binaries that ship next to the host executable and are
+# used by scripts in scripts/. Each is its own add_executable so the script
+# can `cmake --build build --target <name>` independently of greedyfind.
+option(GRD_BUILD_TOOLS "Build CLI helper tools" ON)
+
+if(GRD_BUILD_TOOLS)
+  add_executable(gen_pubkey
+    "${CMAKE_SOURCE_DIR}/tools/gen_pubkey.c"
+  )
+  target_include_directories(gen_pubkey PRIVATE
+    "${CMAKE_SOURCE_DIR}/tools"
+    /opt/homebrew/Cellar/secp256k1/0.8.0/include
+    /opt/homebrew/include
+  )
+  target_compile_options(gen_pubkey PRIVATE ${GRD_WARN_FLAGS})
+  target_link_directories(gen_pubkey PRIVATE
+    /opt/homebrew/Cellar/secp256k1/0.8.0/lib
+    /opt/homebrew/lib
+  )
+  target_link_libraries(gen_pubkey PRIVATE secp256k1)
+endif()
+
+# ----------------------------------------------------------------------------
 # Bench
 # ----------------------------------------------------------------------------
 option(GRD_BUILD_BENCH "Build throughput microbench" ON)
