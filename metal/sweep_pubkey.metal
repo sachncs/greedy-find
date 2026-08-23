@@ -88,7 +88,12 @@ kernel void grdSweepPubkey(
   j_val.limbs[0] += (uint64_t)j_idx;  // small u32 add, no carry past lo
 
   // Compute j·G once per threadgroup.
-  EcPoint j_point = grdScalarMulG(j_val);
+  EcPoint j_point;
+  if (j_val.limbs[0] == 0 && j_val.limbs[1] == 0) {
+    j_point = grdIdentity();
+  } else {
+    j_point = grdScalarMulG(j_val);
+  }
 
   // Each lane tests one variant from the chunk.
   uint variant_idx = chunk_idx * kGRDSweepLanes + lid;
