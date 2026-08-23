@@ -111,6 +111,7 @@ int GRDRunSession(int argc, const char *_Nonnull *_Nonnull argv) {
     return 70;
   }
   __block int exit_code = 0;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
   [sweeper executeWithCompletion:^(NSArray<GRDMatch *> *_Nullable matches,
                                     NSError *_Nullable runErr) {
     if (runErr) {
@@ -122,7 +123,13 @@ int GRDRunSession(int argc, const char *_Nonnull *_Nonnull argv) {
         printf("%s\n", [[m description] UTF8String]);
       }
     }
+    // The sweeper dispatches Metal work asynchronously; the completion
+    // block fires on its own queue after all per-slice command buffers
+    // drain. Block the main thread on a semaphore so matches and errors
+    // are surfaced before the process exits.
+    dispatch_semaphore_signal(done);
   }];
+  dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
   GRDOptionsFree(opts);
   return exit_code;
 }
