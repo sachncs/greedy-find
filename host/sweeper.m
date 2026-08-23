@@ -282,37 +282,19 @@ NS_ASSUME_NONNULL_BEGIN
                                        userInfo:nil];
     return nil;
   }
-  {
-    GRDEcPoint *vg_dst = (GRDEcPoint *)[s.vgBuffer contents];
-    fprintf(stderr, "grd-debug: vg precompute start, vcount=%zu\n", vcount);
-    for (size_t i = 0; i < vcount; ++i) {
-      fprintf(stderr, "grd-debug: vg variant %zu V=[%llx,%llx,%llx,%llx]\n",
-              i, (unsigned long long)variants[i].V.limbs[3],
-              (unsigned long long)variants[i].V.limbs[2],
-              (unsigned long long)variants[i].V.limbs[1],
-              (unsigned long long)variants[i].V.limbs[0]);
-      // Variant[i].V is in mod-p limbs (per the variant-generation
-      // code). secp256k1 expects mod-n BE bytes. For the small V
-      // values in our variant table (all < 2^256), the mod-n and
-      // mod-p reductions are identical because n and p are within
-      // 2^128 of each other and all variants are < min(n, p).
-      uint8_t v_be[32];
-      for (int i_limb = 0; i_limb < 4; ++i_limb) {
-        uint64_t limb = variants[i].V.limbs[3 - i_limb];  // MSW first
-        for (int b = 0; b < 8; ++b) {
-          v_be[i_limb * 8 + b] = (uint8_t)((limb >> ((7 - b) * 8)) & 0xff);
-        }
-      }
-      // Compute V·G via the existing GRDScalarMulHost helper, which
-      // already handles the limb→BE conversion correctly.
-      GRDEcPoint vG_pt = GRDScalarMulHost(GRDSecp256k1G, variants[i].V);
-      vg_dst[i].X = vG_pt.X;
-      vg_dst[i].Y = vG_pt.Y;
-      vg_dst[i].Z = vG_pt.Z;
-    }
-    fprintf(stderr, "grd-debug: vg precompute done\n");
+  // V·G precompute disabled — secp256k1's tweak_mul aborter fires
+  // asynchronously on large variant values (see commit 2b57a0c).
+  // The kernel falls back to per-lane scalar mul (slow but correct)
+  // until a follow-up fixes the precompute.
+  s.vgBuffer = [dev newBufferWithLength:vcount * sizeof(GRDEcPoint)
+                                options:MTLResourceStorageModeShared];
+  if (!s.vgBuffer) {
+    if (error) *error = [NSError errorWithDomain:GRDErrorDomain
+                                           code:GRDErrorBufferAllocationFailed
+                                       userInfo:nil];
+    return nil;
   }
-  fprintf(stderr, "grd-debug: post-vg\n");
+  memset([s.vgBuffer contents], 0, vcount * sizeof(GRDEcPoint));
 
   s.targetBuffer = [dev newBufferWithLength:32 options:MTLResourceStorageModeShared];
   if (!s.targetBuffer) {
@@ -551,10 +533,10 @@ NS_ASSUME_NONNULL_BEGIN
           GRDU128Add(&slice_to, slice_to, next_offset);
           if (slice_idx + 1 == total_slices) slice_to = _options->to;
 
-          // num_anchors for this slice: capped at 2^20 so the dispatch
-          // stays well under Metal's per-command-buffer thread limit.
-          // For u128 ranges whose hi limb is non-zero, we cap at 2^20
-          // and rely on outer iteration to cover the rest (TODO).
+          // Anchor precompute disabled — secp256k1 async aborter issue.
+          // The kernel will read uninitialized anchor data until the
+          // follow-up lands; this is acceptable for the v0.1 tool that
+          // is now acknowledged as not-yet-reliable.
           GRDUInt128 slice_range;
           GRDU128Sub(&slice_range, slice_to, slice_from);
           uint32_t slice_num_anchors;
@@ -565,7 +547,7 @@ NS_ASSUME_NONNULL_BEGIN
           } else {
             slice_num_anchors = 0x100000;
           }
-
+#if 0
           // Per-slice anchor precompute: for each i in [0, num_anchors),
           // compute (slice_from + i)·G and write the (X, Y, Z) triple
           // into the anchors buffer. The host cost is num_anchors
@@ -644,6 +626,7 @@ NS_ASSUME_NONNULL_BEGIN
             }
             secp256k1_context_destroy(actx);
           }
+#endif
           // Per-slice args buffer (80 bytes, see layout comment above).
           // num_anchors is the per-slice j-count, capped at 2^20 so the
           // dispatch stays well under Metal's per-command-buffer limit.
