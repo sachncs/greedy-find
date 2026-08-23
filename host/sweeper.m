@@ -193,8 +193,11 @@ NS_ASSUME_NONNULL_BEGIN
   // per-device depth is kept small to avoid VRAM pressure.
 
   NSError *lib_err = nil;
-  NSURL *url = [NSURL fileURLWithPath:
-      [[NSBundle mainBundle] pathForResource:@"greedy" ofType:@"metallib"]];
+  NSString *metallib_path =
+      [[NSBundle mainBundle] pathForResource:@"greedy" ofType:@"metallib"];
+  NSURL *url = (metallib_path != nil)
+                   ? [NSURL fileURLWithPath:metallib_path]
+                   : nil;
   if (url && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
     s.library = [dev newLibraryWithURL:url error:&lib_err];
   } else {
