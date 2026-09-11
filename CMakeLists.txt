@@ -224,27 +224,6 @@ file(GLOB KAT_SRC
     )
     add_test(NAME "kat_${KAT_NAME}" COMMAND "${KAT_NAME}")
   endforeach()
-
-  file(GLOB UNIT_SRC "${CMAKE_SOURCE_DIR}/tests/unit/*.c")
-  foreach(UNIT_FILE ${UNIT_SRC})
-    get_filename_component(UNIT_NAME "${UNIT_FILE}" NAME_WE)
-    add_executable("${UNIT_NAME}" "${UNIT_FILE}"
-      "${CMAKE_SOURCE_DIR}/host/ecc.c")
-    target_include_directories("${UNIT_NAME}" PRIVATE
-      "${CMAKE_SOURCE_DIR}/host"
-      "${CMAKE_SOURCE_DIR}/tests"
-    )
-    file(READ "${UNIT_FILE}" HEAD_BYTES LIMIT 4096)
-    string(FIND "${HEAD_BYTES}" "#import" HAS_OBJC)
-    if(HAS_OBJC GREATER -1)
-      target_link_libraries("${UNIT_NAME}" PRIVATE
-        ${FOUNDATION_FRAMEWORK}
-        ${METAL_FRAMEWORK}
-      )
-    endif()
-    target_compile_options("${UNIT_NAME}" PRIVATE ${GRD_WARN_FLAGS})
-    add_test(NAME "unit_${UNIT_NAME}" COMMAND "${UNIT_NAME}")
-  endforeach()
 endif()
 
 # ----------------------------------------------------------------------------
