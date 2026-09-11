@@ -102,6 +102,54 @@ output should contain a `MATCH j=0+2` line.
 - [plan.md](plan.md) — the 54-unit atomic implementation plan and
   per-unit quality gates.
 
+## Architecture (at a glance)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        host (Objective-C)                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │  --pubkey   │  │   config    │  │   sweep     │             │
+│  │  --address  │→ │   parser    │→ │ dispatcher  │→ MTLDevice[] │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
+└──────────────────────────────┬─────────────────────────────────┘
+                               │ shared cmd buffers
+                               ▼
+┌────────────────────────────────────────────────────────────────┐
+│                       device (Metal)                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │  prune      │  │   sweep     │  │  match_buf  │             │
+│  │  kernel     │→ │   kernel    │→ │  (atomic)   │             │
+│  │ (variants)  │  │ (j · V)·G   │  │             │             │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Variants are precomputed once per device on the host (libsecp256k1);
+the sweep kernel does per-lane scalar muls + EC adds; matches are
+written to a small atomic match-buffer per device. See
+[`docs/architecture.md`](docs/architecture.md) for the full pipeline.
+
+## Troubleshooting
+
+- **`xcrun metal not found` from CMake** — install full Xcode from
+  the App Store, *not* just CommandLineTools. The Metal toolchain
+  ships only with Xcode.
+- **`libsecp256k1.h: No such file or directory`** — install via
+  Homebrew (`brew install secp256k1`), your distro's package
+  manager (`apt install libsecp256k1-dev`), or set
+  `SECP256K1_PREFIX` to the install root for non-standard layouts.
+- **`/opt/homebrew/...` paths fail** — set
+  `SECP256K1_PREFIX=/path/to/secp256k1` and re-run `cmake`. See
+  `CMakeLists.txt` for the supported environment overrides.
+- **Empty output but I expected a MATCH** — the smallest
+  recoverable scalar in `--pubkey` mode is `d=2`, not `d=1`. The
+  variant table has no `V=0`. Update the example to d=2's pubkey
+  (`02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5`).
+- **`--address` exits 70 with "A40+"** — `--address` is a stub in
+  v0.1. Use `--pubkey` until A40 lands.
+- **`u128 ranges > 2^64 not supported`** — the v0.1 kernel decodes
+  only the low 64 bits. Constrain `--from` / `--to` to `[0, 2^64)`.
+
 ## Status
 
 What's implemented:
