@@ -34,10 +34,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 // No-op illegal-argument callback for libsecp256k1. The default
 // callback abort()s on certain inputs; we want to keep going and
-// trust the API's return value instead.
+// trust the API's return value instead. The message is still
+// surfaced to stderr so invariant violations are visible to the
+// operator.
 static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
-  (void)message;
   (void)data;
+  if (message) fprintf(stderr, "grd: secp256k1 illegal: %s\n", message);
 }
 
 // Per-device state. Each device gets its own queue, library, and
