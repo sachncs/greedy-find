@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
-project(greedyfind C OBJC)
+project(greedyfind
+  VERSION 0.1.0
+  LANGUAGES C OBJC)
 
 # ----------------------------------------------------------------------------
 # Configuration
@@ -129,6 +131,9 @@ target_include_directories(greedyfind PRIVATE
 )
 
 target_compile_options(greedyfind PRIVATE ${GRD_WARN_FLAGS})
+
+target_compile_definitions(greedyfind PRIVATE
+  GRD_VERSION="${PROJECT_VERSION}")
 
 # Frameworks: Foundation + Metal are the only Apple frameworks required.
 find_library(METAL_FRAMEWORK Metal REQUIRED)

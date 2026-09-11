@@ -73,7 +73,7 @@ int GRDRunSession(int argc, const char *_Nonnull *_Nonnull argv) {
       return 0;
     }
     if (strcmp(argv[i], "--version") == 0) {
-      printf("greedyfind v0.1.0\n");
+      printf("greedyfind v%s\n", GRD_VERSION);
       return 0;
     }
   }
