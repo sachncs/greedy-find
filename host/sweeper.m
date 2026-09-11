@@ -877,26 +877,15 @@ static const uint32_t GRDMatchBufferSlots = 256;
 @end
 
 // =============================================================================
-// GRDAddressSweeper — --address mode (A27 stub)
+// GRDAddressSweeper — --address mode (A27 stub).
+//
+// Inherits from GRDSweeperBase so it reuses the same GRDSweeper
+// protocol surface as GRDPubkeySweeper. setupWithOptions: always
+// returns NO with a "not implemented" error; the dispatcher's
+// GRDRunSession surfaces the error to the operator.
 // =============================================================================
 
-@interface GRDAddressSweeper () {
-  NSArray<id<MTLDevice>> *_devices;
-}
-@end
-
 @implementation GRDAddressSweeper
-
-- (instancetype)init {
-  if ((self = [super init])) {
-    _devices = MTLCopyAllDevices();
-  }
-  return self;
-}
-
-- (void)dealloc { [super dealloc]; }
-
-- (void)cancel {}
 
 - (BOOL)setupWithOptions:(GRDOptions *)opts
                    error:(NSError *_Nullable *_Nullable)error {
@@ -908,17 +897,6 @@ static const uint32_t GRDMatchBufferSlots = 256;
                                            @"--address on GPU lands in A40+"
                                      }];
   return NO;
-}
-
-- (void)executeWithCompletion:(void (^_Nonnull)(NSArray<GRDMatch *> *_Nullable,
-                                                  NSError *_Nullable))completion {
-  if (completion) {
-    NSError *err = [NSError errorWithDomain:GRDErrorDomain
-                                      code:GRDErrorGPUNotImplemented
-                                  userInfo:@{NSLocalizedDescriptionKey:
-                                                @"--address on GPU lands in A40+"}];
-    dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, err); });
-  }
 }
 
 @end

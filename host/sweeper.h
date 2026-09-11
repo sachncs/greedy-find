@@ -43,8 +43,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface GRDPubkeySweeper : GRDSweeperBase <GRDSweeper>
 @end
 
-/** Concrete sweeper for --address mode (uses grdSweepAddressStub). */
-@interface GRDAddressSweeper : NSObject <GRDSweeper>
+/** Concrete sweeper for --address mode (A27 stub; lands in A40+). */
+@interface GRDAddressSweeper : GRDSweeperBase <GRDSweeper>
 @end
 
 NS_ASSUME_NONNULL_END
