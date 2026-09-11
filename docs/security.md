@@ -88,6 +88,6 @@ listed in the repository metadata.
 
 ## 6. License and warranty
 
-`greedyfind` is MIT-licensed. See [`LICENSE-MIT`](../LICENSE-MIT).
+`greedyfind` is MIT-licensed. See [`LICENSE`](../LICENSE).
 There is no warranty of any kind. The authors are not liable
 for any damages arising from the use or misuse of this tool.
