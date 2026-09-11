@@ -617,10 +617,10 @@ static const uint32_t GRDMatchBufferSlots = 256;
           GRDU128Add(&slice_to, slice_to, next_offset);
           if (slice_idx + 1 == total_slices) slice_to = _options->to;
 
-          // Anchor precompute disabled — secp256k1 async aborter issue.
-          // The kernel will read uninitialized anchor data until the
-          // follow-up lands; this is acceptable for the v0.1 tool that
-          // is now acknowledged as not-yet-reliable.
+          // Anchor precompute. The v0.1 kernel does not read anchorsBuffer
+          // (the struct field is marked "unused by C1") so we only
+          // need the per-slice staging buffer for the blit copy; the
+          // device-wide anchorsBuffer pool was dropped.
           GRDUInt128 slice_range;
           GRDU128Sub(&slice_range, slice_to, slice_from);
           uint32_t slice_num_anchors;
@@ -632,12 +632,8 @@ static const uint32_t GRDMatchBufferSlots = 256;
             slice_num_anchors = 0x100000;
           }
 
-// Anchor precompute + blit copy. We allocate a small Shared staging
-          // buffer per slice (only slice_num_anchors * 96 bytes), write
-          // the anchor table on the CPU, then use a blit encoder to
-          // copy it into the actual anchorsBuffer. The blit copy runs
-          // in the same command buffer as the sweep, so the GPU sees
-          // the data without explicit synchronization.
+          // Per-slice staging buffer (slice_num_anchors * 96 bytes).
+          // Written on the CPU then passed straight to the kernel.
           id<MTLBuffer> anchor_staging = [dev_state.device
               newBufferWithLength:slice_num_anchors * sizeof(GRDEcPoint)
                            options:MTLResourceStorageModeShared];
