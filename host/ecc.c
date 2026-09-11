@@ -60,6 +60,7 @@ GRDUInt128 GRDU128FromU64(uint64_t v) { return (GRDUInt128){.lo = v, .hi = 0}; }
 
 const char *GRDU128ParseDecimal(GRDUInt128 *out, const char *s) {
   if (!s || !*s) return "empty string";
+  if (*s == '-' || *s == '+') return "signed values not supported";
   GRDUInt128 acc = {0, 0};
   for (const char *p = s; *p; ++p) {
     if (*p < '0' || *p > '9') return "non-decimal character";
