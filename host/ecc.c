@@ -23,6 +23,12 @@ const GRDUInt256x64 GRDPrimeP = {{
     0xFFFFFFFFFFFFFFFFull,
 }};
 
+// GRDPrimeP - 2; the Fermat exponent used by GRDFieldInvHost.
+const GRDUInt256x64 GRDPrimePMinus2 = {{
+    0xFFFFFFFEFFFFFC2Dull, 0xFFFFFFFFFFFFFFFFull, 0xFFFFFFFFFFFFFFFFull,
+    0xFFFFFFFFFFFFFFFFull,
+}};
+
 const GRDUInt256x64 GRDOrderN = {{
     0xBFD25E8CD0364141ull, 0xBAAEDCE6AF48A03Bull, 0xFFFFFFFFFFFFFFFEull,
     0xFFFFFFFFFFFFFFFFull,
@@ -263,20 +269,13 @@ GRDUInt256x64 GRDFieldSqrHost(GRDUInt256x64 a) {
 }
 
 GRDUInt256x64 GRDFieldInvHost(GRDUInt256x64 a) {
-  // Exponent = p - 2 =
-  //   0xFFFFFFFFFFFFFFFF FFFFFFFFFFFFFFFF FFFFFFFFFFFFFFFF FFFFFFFEFFFFFC2D
+  // Exponent = p - 2 (see GRDPrimePMinus2 above).
   GRDUInt256x64 result = {{1, 0, 0, 0}};
   GRDUInt256x64 base = a;
   for (int i = 0; i < 256; ++i) {
-    const uint64_t kExpLo = 0xFFFFFFFEFFFFFC2Dul;
-    const uint64_t kExp1 = 0xFFFFFFFFFFFFFFFFul;
-    const uint64_t kExp2 = 0xFFFFFFFFFFFFFFFFul;
-    const uint64_t kExp3 = 0xFFFFFFFFFFFFFFFFul;
-    uint64_t bit;
-    if (i < 64) bit = (kExpLo >> i) & 1ul;
-    else if (i < 128) bit = (kExp1 >> (i - 64)) & 1ul;
-    else if (i < 192) bit = (kExp2 >> (i - 128)) & 1ul;
-    else bit = (kExp3 >> (i - 192)) & 1ul;
+    int limb = i / 64;
+    int shift = i % 64;
+    uint64_t bit = (GRDPrimePMinus2.limbs[limb] >> shift) & 1ul;
     if (bit) result = GRDFieldMulHost(result, base);
     if (i < 255) base = GRDFieldSqrHost(base);
   }
