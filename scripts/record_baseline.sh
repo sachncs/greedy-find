@@ -33,16 +33,16 @@ if [[ -z "${json_line}" ]]; then
 fi
 
 date_str="$(date +%F)"
-python3 - <<PY
-import json
-with open("${BASELINE}", "r") as f:
+printf "%s" "${json_line}" | python3 -c '
+import json, sys
+with open("'"${BASELINE}"'", "r") as f:
     base = json.load(f)
-new = json.loads('''${json_line}''')
+new = json.loads(sys.stdin.read())
 base.update(new)
-base["date"] = "${date_str}"
-with open("${BASELINE}", "w") as f:
+base["date"] = "'"${date_str}"'"
+with open("'"${BASELINE}"'", "w") as f:
     json.dump(base, f, indent=2)
     f.write("\n")
-PY
+'
 
 printf "[record] wrote %s\n" "${BASELINE}"
