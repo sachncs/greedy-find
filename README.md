@@ -32,16 +32,7 @@ scalars `j` such that `x(j·G) == x(P - V·G)` (pubkey) or
 
 ## Quick start
 
-### 1. Check the toolchain
-
-```bash
-bash scripts/check_toolchain.sh
-```
-
-Verifies macOS 14+, full Xcode (not just CommandLineTools), cmake
-≥ 3.25, and the local git author.
-
-### 2. Build
+### 1. Build
 
 ```bash
 cmake -S . -B build
@@ -53,14 +44,25 @@ binary, the Metal kernels (linked into `greedy.metallib`), the
 unit and KAT tests, and the bench harness. `metallib` is embedded
 next to the executable via `BUILD_RPATH`.
 
-### 3. Smoke test (both modes)
+### 2. Smoke test (both modes)
 
 ```bash
 bash examples/run.sh
 ```
 
-Runs a tiny sweep (`[0, 16)`) with privkey=1 in both `--pubkey` and
-`--address` modes and asserts that the d=1 match is found.
+Runs a tiny sweep (`[0, 16)`) in `--pubkey` mode and asserts the
+d=2 match is found; exits non-zero if `--address` mode silently
+regresses (the stub must still return its not-implemented error).
+
+### 3. (Optional) Verify your toolchain
+
+```bash
+bash scripts/check_toolchain.sh
+```
+
+Verifies macOS 14+, full Xcode (not just CommandLineTools), cmake
+≥ 3.25, and the local git author. Skip this if you already built
+successfully above.
 
 ### 4. Run the KATs
 
