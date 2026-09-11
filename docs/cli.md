@@ -24,6 +24,11 @@ greedyfind --pubkey 0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16
 
 ### `--address <base58>`
 
+> **Not yet implemented in v0.1.** The flag is parsed but the
+> GPU sweep path returns `--address on GPU lands in A40+` and
+> the process exits with code 70. Only `--pubkey` works
+> end-to-end today.
+
 A P2PKH mainnet address (base58check). Testnet and P2SH are
 not supported in v0.1.
 
@@ -100,13 +105,18 @@ rolling log. Default `./greedyfind-out`.
 
 ```bash
 ./build/greedyfind \
-    --pubkey 0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798 \
+    --pubkey 02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5 \
     --from 0 --to 16
 ```
 
-Expected output: a `MATCH j=1` line.
+Expected output: a `MATCH j=0+2` line. (d=1 is unreachable in
+--pubkey mode because the variant table contains no V=0; d=2 is
+the smallest recoverable scalar.)
 
 ### Address sweep with cache + resume
+
+> **Not yet implemented.** Will be wired in a follow-up. See
+> `--address` above.
 
 ```bash
 ./build/greedyfind \

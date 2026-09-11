@@ -9,8 +9,11 @@ range-splitting. Sibling to the CPU Rust crate
 
 Two modes:
 
-- `--pubkey <hex>` — SEC1 hex public key.
+- `--pubkey <hex>` — SEC1 hex public key. **Implemented.**
 - `--address <base58>` — P2PKH mainnet address (base58check).
+  **Not yet implemented in v0.1; the flag is parsed but the
+  GPU sweep path returns an `--address on GPU lands in A40+`
+  error.**
 
 Both modes sweep an arbitrary integer range `[from, to)` and search for
 scalars `j` such that `x(j·G) == x(P - V·G)` (pubkey) or
