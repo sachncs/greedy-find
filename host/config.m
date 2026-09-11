@@ -207,7 +207,15 @@ GRDOptions *_Nullable GRDOptionsFromArgv(
         return NULL;
       }
     } else if (strcmp(a, "--cache-points") == 0) {
-      opts->cache_points = true;
+      if (outError)
+        *outError = [NSError errorWithDomain:GRDErrorDomain
+                                       code:GRDErrorInvalidArguments
+                                   userInfo:@{
+                                     NSLocalizedDescriptionKey:
+                                         @"--cache-points not yet implemented in v0.1"
+                                   }];
+      GRDOptionsFree(opts);
+      return NULL;
     } else if (strcmp(a, "--resume") == 0) {
       opts->resume = true;
     } else if (strcmp(a, "--batch-size") == 0 && i + 1 < argc) {
