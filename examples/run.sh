@@ -55,20 +55,22 @@ ADDRESS="1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH"
 ADDOUT="$(mktemp -t grd-smoke-add.XXXXXX)"
 trap 'rm -f "${PUBOUT}" "${ADDOUT}"' EXIT
 
-if ! "${GRD}" --address "${ADDRESS}" --from 0 --to 16 >"${ADDOUT}" 2>&1; then
-  printf "[smoke] --address run failed:\n" >&2
+# --address mode is a documented-but-not-implemented stub. The
+# current GRDAddressSweeper returns GRDErrorGPUNotImplemented with
+# message "--address on GPU lands in A40+" and the dispatcher
+# translates that into exit code 70. Treat that as expected, but
+# fail loudly if the stub ever silently accepts the address (which
+# would mask a regression in the stub itself).
+if "${GRD}" --address "${ADDRESS}" --from 0 --to 16 >"${ADDOUT}" 2>&1; then
+  printf "[smoke] --address unexpectedly succeeded:\n" >&2
   cat "${ADDOUT}" >&2
   exit 1
 fi
-# --address mode requires the A40+ Metal pipeline; on hosts without
-# it the run may emit a "not implemented" error. We treat that as
-# acceptable smoke coverage (the run did not crash, the parser
-# worked, and the address decoded).
-if grep -qE 'MATCH .* 1|privkey=1|privkey.=1|j=1[^0-9]' "${ADDOUT}"; then
-  printf "[smoke] --address ok: d=1 found in [0, 16)\n"
-else
-  printf "[smoke] --address ran (no GPU address path yet): %s\n" \
-         "$(head -n1 "${ADDOUT}" || echo '(no output)')"
+if ! grep -q "A40+" "${ADDOUT}"; then
+  printf "[smoke] --address error did not mention the A40+ stub:\n" >&2
+  cat "${ADDOUT}" >&2
+  exit 1
 fi
+printf "[smoke] --address stub gate ok (rejects with A40+ message)\n"
 
 printf "[smoke] all checks passed\n"
