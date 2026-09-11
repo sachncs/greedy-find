@@ -388,22 +388,6 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
       vg_dst[i].Z.limbs[3] = 0;
     }
     secp256k1_context_destroy(vg_ctx);
-    // DEBUG: dump first vG
-    GRDEcPoint *vg_dst_dbg = (GRDEcPoint *)[s.vgBuffer contents];
-    fprintf(stderr, "grd-debug: vG[0] X=[%llx,%llx,%llx,%llx] Y=[%llx,%llx,%llx,%llx] Z=[%llx,%llx,%llx,%llx]\n",
-            (unsigned long long)vg_dst_dbg[0].X.limbs[3],
-            (unsigned long long)vg_dst_dbg[0].X.limbs[2],
-            (unsigned long long)vg_dst_dbg[0].X.limbs[1],
-            (unsigned long long)vg_dst_dbg[0].X.limbs[0],
-            (unsigned long long)vg_dst_dbg[0].Y.limbs[3],
-            (unsigned long long)vg_dst_dbg[0].Y.limbs[2],
-            (unsigned long long)vg_dst_dbg[0].Y.limbs[1],
-            (unsigned long long)vg_dst_dbg[0].Y.limbs[0],
-            (unsigned long long)vg_dst_dbg[0].Z.limbs[3],
-            (unsigned long long)vg_dst_dbg[0].Z.limbs[2],
-            (unsigned long long)vg_dst_dbg[0].Z.limbs[1],
-            (unsigned long long)vg_dst_dbg[0].Z.limbs[0]);
-    fprintf(stderr, "grd-debug: vg precompute done; failures=%d\n", precompute_failures);
   }
 
   s.targetBuffer = [dev newBufferWithLength:32 options:MTLResourceStorageModeShared];
@@ -770,18 +754,6 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
           ap64[2] = anchors_addr;    // offset 16
           ap32[6] = slice_num_anchors;  // offset 24
           ap64[4] = vg_buf_addr;     // offset 32
-          fprintf(stderr, "grd-debug: args packing anchors=%llx vg=%llx target=%llx\n",
-                  (unsigned long long)anchors_addr, (unsigned long long)vg_buf_addr,
-                  (unsigned long long)target_x_addr);
-          fprintf(stderr, "grd-debug: args bytes 0-31: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                  args_buf[0], args_buf[1], args_buf[2], args_buf[3],
-                  args_buf[4], args_buf[5], args_buf[6], args_buf[7],
-                  args_buf[8], args_buf[9], args_buf[10], args_buf[11],
-                  args_buf[12], args_buf[13], args_buf[14], args_buf[15],
-                  args_buf[16], args_buf[17], args_buf[18], args_buf[19],
-                  args_buf[20], args_buf[21], args_buf[22], args_buf[23],
-                  args_buf[24], args_buf[25], args_buf[26], args_buf[27],
-                  args_buf[28], args_buf[29], args_buf[30], args_buf[31]);
           ap64[5] = match_buf_addr;  // offset 40
           ap64[6] = match_cnt_addr;  // offset 48
           // from_limbs at offset 56 (u128 LE, 4 × u32)
@@ -841,7 +813,6 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
            threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
           [senc endEncoding];
           [sweep_cmd addCompletedHandler:^(id<MTLCommandBuffer> bf) {
-            fprintf(stderr, "grd-debug: slice done status=%lu\n", (unsigned long)bf.status);
             if (bf.status != MTLCommandBufferStatusCompleted) {
               dispatch_async(merge_q, ^{
                 if (!first_err) {

@@ -82,10 +82,5 @@ kernel void grdSweepPubkey(
     if (args->match_buffer && slot < 0x100000) {
       args->match_buffer[slot] = matched;
     }
-  } else if (lid == 0 && chunk_idx == 0 && j_idx == 0) {
-    // DEBUG: write the candidate X to match_buffer[0] so we can verify.
-    args->match_buffer[0] = candidate.X;
-    args->match_buffer[1] = target;
-    atomic_fetch_add_explicit(args->match_count, 1u, memory_order_relaxed);
   }
 }
