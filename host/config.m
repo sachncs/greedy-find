@@ -91,13 +91,15 @@ static int grd_parse_address(GRDOptions *opts, const char *str,
   NSData *hash = GRDDecodeAddress([NSString stringWithUTF8String:str],
                                   &version, outError);
   if (!hash) return -1;
-  if (version != 0x00 && version != 0x05) {
+  if (version != 0x00) {
     if (outError)
       *outError = [NSError errorWithDomain:GRDErrorDomain
                                      code:GRDErrorAddressDecodeFailed
                                  userInfo:@{
                                    NSLocalizedDescriptionKey:
-                                       @"Address: unsupported version byte"
+                                       (version == 0x05)
+                                           ? @"P2SH not supported in v0.1"
+                                           : @"Address: unsupported version byte"
                                  }];
     return -1;
   }
