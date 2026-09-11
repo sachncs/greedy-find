@@ -97,9 +97,59 @@ static void test_double_g_known_answer(void) {
   }
 }
 
+static void test_g_constant(void) {
+  // secp256k1's well-known generator G. Hex bytes (big-endian) come
+  // from the BIP340 / secp256k1 documentation. This test catches a
+  // hand-edit of the GRDSecp256k1G limbs in host/ecc.c that
+  // mis-types a single hex digit (the 2*G check above would still
+  // pass because it's computed from whatever G is, so we need a
+  // direct comparison).
+  static const uint8_t kExpectedX[32] = {
+    0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC,
+    0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B, 0x07,
+    0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9,
+    0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x98,
+  };
+  static const uint8_t kExpectedY[32] = {
+    0x48, 0x3A, 0xDA, 0x77, 0x26, 0xA3, 0xC4, 0x65,
+    0x5D, 0xA4, 0xFB, 0xFC, 0x0E, 0x11, 0x08, 0xA8,
+    0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
+    0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8,
+  };
+  uint8_t got_x_be[32];
+  uint8_t got_y_be[32];
+  for (int i = 0; i < 4; ++i) {
+    uint64_t limb_x = GRDSecp256k1G.X.limbs[3 - i];
+    uint64_t limb_y = GRDSecp256k1G.Y.limbs[3 - i];
+    for (int j = 0; j < 8; ++j) {
+      got_x_be[i * 8 + j] = (uint8_t)(limb_x >> ((7 - j) * 8));
+      got_y_be[i * 8 + j] = (uint8_t)(limb_y >> ((7 - j) * 8));
+    }
+  }
+  if (memcmp(got_x_be, kExpectedX, 32) != 0) {
+    fprintf(stderr, "FAIL [G_known_X]: G.X does not match secp256k1 reference\n");
+    fprintf(stderr, "         got  ");
+    for (int i = 0; i < 32; ++i) fprintf(stderr, "%02x", got_x_be[i]);
+    fprintf(stderr, "\n         want ");
+    for (int i = 0; i < 32; ++i) fprintf(stderr, "%02x", kExpectedX[i]);
+    fprintf(stderr, "\n");
+    g_failures++;
+  }
+  if (memcmp(got_y_be, kExpectedY, 32) != 0) {
+    fprintf(stderr, "FAIL [G_known_Y]: G.Y does not match secp256k1 reference\n");
+    fprintf(stderr, "         got  ");
+    for (int i = 0; i < 32; ++i) fprintf(stderr, "%02x", got_y_be[i]);
+    fprintf(stderr, "\n         want ");
+    for (int i = 0; i < 32; ++i) fprintf(stderr, "%02x", kExpectedY[i]);
+    fprintf(stderr, "\n");
+    g_failures++;
+  }
+}
+
 int main(void) {
   test_double_g();
   test_double_g_known_answer();
+  test_g_constant();
   (void)aff;  // silence unused
 
   if (g_failures) {
