@@ -3,6 +3,12 @@
 > **Educational and research use only.** See [`DISCLAIMER.md`](DISCLAIMER.md)
 > and [`docs/security.md`](docs/security.md).
 
+> **Not a wallet, not a signer, not a keyspace scanner.** `greedyfind`
+> searches a *bounded, known* range for a private key whose associated
+> public key or address matches a target. It cannot recover keys from a
+> signer, scan the 2^256 keyspace, or produce a signed transaction.
+> See [`docs/security.md`](docs/security.md) for the full threat model.
+
 Metal-accelerated secp256k1 private-key discovery using multi-variant
 range-splitting. Sibling to the CPU Rust crate
 [`find`](https://github.com/sachncs/find).
