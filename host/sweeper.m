@@ -314,7 +314,16 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
       0x0E, 0x11, 0x08, 0xA8, 0xFD, 0x17, 0xB4, 0x48, 0xA6, 0x85, 0x54, 0x19,
       0x9C, 0x47, 0xD0, 0x8F, 0xFB, 0x10, 0xD4, 0xB8,
     };
-    (void)secp256k1_ec_pubkey_parse(vg_ctx, &G_pk, kG_uncompressed, 65);
+    if (!secp256k1_ec_pubkey_parse(vg_ctx, &G_pk, kG_uncompressed, 65)) {
+      secp256k1_context_destroy(vg_ctx);
+      if (error) *error = [NSError errorWithDomain:GRDErrorDomain
+                                             code:GRDErrorLibraryLoadFailed
+                                         userInfo:@{
+                                           NSLocalizedDescriptionKey:
+                                               @"secp256k1 rejected the hardcoded G constant"
+                                         }];
+      return nil;
+    }
     GRDEcPoint *vg_dst = (GRDEcPoint *)[s.vgBuffer contents];
     int precompute_failures = 0;
     for (size_t i = 0; i < vcount; ++i) {
