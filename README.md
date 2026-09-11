@@ -95,7 +95,7 @@ measured-revert rules).
 
 ## License
 
-MIT — see [`LICENSE-MIT`](LICENSE-MIT).
+MIT — see [`LICENSE`](LICENSE).
 
 ## Commit author
 
