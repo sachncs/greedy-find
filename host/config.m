@@ -298,6 +298,20 @@ GRDOptions *_Nullable GRDOptionsFromArgv(
     GRDOptionsFree(opts);
     return NULL;
   }
+  // v0.1 kernel only decodes the low 64 bits of j; reject ranges
+  // whose hi limb is non-zero so the user gets a clear error
+  // instead of a silently-truncated search.
+  if (opts->from.hi != 0 || opts->to.hi != 0) {
+    if (outError)
+      *outError = [NSError errorWithDomain:GRDErrorDomain
+                                     code:GRDErrorInvalidArguments
+                                 userInfo:@{
+                                   NSLocalizedDescriptionKey:
+                                       @"u128 ranges > 2^64 not supported in v0.1"
+                                 }];
+    GRDOptionsFree(opts);
+    return NULL;
+  }
   // from and to must be specified (default 0/0 means unspecified).
   if (opts->from.lo == 0 && opts->from.hi == 0 &&
       opts->to.lo == 0 && opts->to.hi == 0) {
