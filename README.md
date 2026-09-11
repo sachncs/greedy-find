@@ -91,12 +91,31 @@ output should contain a `MATCH j=0+2` line.
 
 ## Status
 
-Implementation complete through A53. Remaining work: A40–A44
-throughput optimisations are kept iff the bench shows ≥5% gain
-over the unoptimised baseline (see
-[`docs/algorithms.md`](docs/algorithms.md) and
-[`docs/architecture.md`](docs/architecture.md) for the
-measured-revert rules).
+What's implemented:
+
+- `--pubkey` mode (secp256k1 X-coordinate sweep) over an
+  arbitrary `[from, to)` range, on Apple Silicon via Metal.
+- Host-side reference field/point arithmetic
+  (`host/ecc.c`) used by the KAT suite.
+- KATs for field ops, hash160, base58check decode, address
+  parsing, variant generation, load balance, telemetry,
+  checkpointing.
+- Reliability matrix (`scripts/reliability.sh`) and a
+  differential test against the `find` Rust crate
+  (`scripts/differential.sh`).
+- Cache layer (`GRDCache`) plumbing; integration with the
+  sweep pipeline is on the roadmap.
+
+What's on the roadmap:
+
+- Address-mode GPU sweep — currently a stub that returns
+  "not yet implemented".
+- u128 ranges > 2^64 — the v0.1 kernel decodes only the low
+  64 bits and silently truncates anything larger. The CLI
+  rejects these with a clear error.
+- P2SH (version 0x05) address decoding — the CLI rejects it.
+- Throughput optimisations from the A40–A44 batch are gated
+  on a ≥5% bench win over the unoptimised baseline.
 
 ## License
 
