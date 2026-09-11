@@ -17,6 +17,11 @@ constant uint kGRDSweepLanes     = 32;
 constant uint kGRDVariantsTotal  = 512;
 constant uint kGRDVariantChunks  = kGRDVariantsTotal / kGRDSweepLanes;  // 16
 
+// Must match GRDMatchBufferSlots in host/sweeper.m. The kernel and
+// the host agree on this so the per-slice atomic counter stays in
+// range; matches beyond this cap are silently dropped.
+constant uint kGRDMatchBufferSlots = 256;
+
 struct GRDSweepArgs {
   device const UInt256x64 *_Nullable target_x;
   device const uint8_t     *_Nullable bitmap;
@@ -79,7 +84,7 @@ kernel void grdSweepPubkey(
     matched.limbs[0] += (uint64_t)j_idx;
     uint slot = atomic_fetch_add_explicit(args->match_count, 1u,
                                           memory_order_relaxed);
-    if (args->match_buffer && slot < 0x100000) {
+    if (args->match_buffer && slot < kGRDMatchBufferSlots) {
       args->match_buffer[slot] = matched;
     }
   }

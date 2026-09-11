@@ -62,6 +62,11 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
 @property (nonatomic, assign) uint64_t j_per_sec;  // last measured
 @end
 
+// Match-buffer slot count per device. Must match the kGRDMatchBufferSlots
+// constant in metal/sweep_pubkey.metal so the host's match_count cap
+// and the kernel's slot-bounds check agree.
+static const uint32_t GRDMatchBufferSlots = 256;
+
 @implementation GRDDeviceState
 @end
 
@@ -440,9 +445,9 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
     return nil;
   }
 
-  // Match buffer: 256 slots per device. With N devices, the global
-  // match pool is N × 256.
-  s.matchBuffer = [dev newBufferWithLength:256 * sizeof(GRDUInt256x64)
+  // Match buffer: GRDMatchBufferSlots slots per device. With N devices,
+  // the global match pool is N × GRDMatchBufferSlots.
+  s.matchBuffer = [dev newBufferWithLength:GRDMatchBufferSlots * sizeof(GRDUInt256x64)
                                    options:MTLResourceStorageModeShared];
   if (!s.matchBuffer) {
     if (error) *error = [NSError errorWithDomain:GRDErrorDomain
@@ -825,7 +830,7 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
             } else {
               // Drain the per-device match buffer.
               uint32_t count = *(uint32_t *)[dev_state.matchCountBuffer contents];
-              if (count > 256) count = 256;
+              if (count > GRDMatchBufferSlots) count = GRDMatchBufferSlots;
               size_t vcount = 0;
               const GRDVariant *variants = GRDGenerateVariants(&vcount);
               GRDUInt256x64 *m = (GRDUInt256x64 *)[dev_state.matchBuffer contents];
