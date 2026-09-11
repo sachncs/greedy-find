@@ -115,6 +115,37 @@ add_custom_command(
 add_custom_target(greedy_metallib ALL DEPENDS "${METAL_LIB}")
 
 # ----------------------------------------------------------------------------
+# Third-party crypto libraries: secp256k1 + libtomcrypt.
+#
+# The original build hardcoded /opt/homebrew/Cellar/secp256k1/0.8.0/, which
+# works only on Apple-Silicon Homebrew installs. The block below prefers
+# find_library (Intel Mac, Linux, system pkg), and falls back to the legacy
+# Homebrew layout when SECP256K1_PREFIX is set in the environment so the
+# existing Apple-Silicon workflow keeps working.
+# ----------------------------------------------------------------------------
+if(DEFINED ENV{SECP256K1_PREFIX})
+  set(_secp_prefix "$ENV{SECP256K1_PREFIX}")
+  find_path(SECP256K1_INCLUDE_DIR
+    NAMES secp256k1.h
+    HINTS "${_secp_prefix}/include"
+    NO_DEFAULT_PATH)
+  find_library(SECP256K1_LIBRARY
+    NAMES secp256k1
+    HINTS "${_secp_prefix}/lib"
+    NO_DEFAULT_PATH)
+else()
+  find_library(SECP256K1_LIBRARY NAMES secp256k1)
+  find_path(SECP256K1_INCLUDE_DIR NAMES secp256k1.h)
+endif()
+if(NOT SECP256K1_LIBRARY OR NOT SECP256K1_INCLUDE_DIR)
+  message(FATAL_ERROR
+    "libsecp256k1 not found. Install via Homebrew (brew install secp256k1), "
+    "apt (libsecp256k1-dev), or set SECP256K1_PREFIX to its install root.")
+endif()
+
+find_library(TOMCRYPT_LIBRARY NAMES tomcrypt)
+
+# ----------------------------------------------------------------------------
 # Host executable
 # ----------------------------------------------------------------------------
 file(GLOB HOST_SRC
@@ -126,8 +157,7 @@ add_executable(greedyfind ${HOST_SRC})
 
 target_include_directories(greedyfind PRIVATE
   "${CMAKE_SOURCE_DIR}/host"
-  /opt/homebrew/Cellar/secp256k1/0.8.0/include
-  /opt/homebrew/include
+  "${SECP256K1_INCLUDE_DIR}"
 )
 
 target_compile_options(greedyfind PRIVATE ${GRD_WARN_FLAGS})
@@ -139,16 +169,11 @@ target_compile_definitions(greedyfind PRIVATE
 find_library(METAL_FRAMEWORK Metal REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 
-target_link_directories(greedyfind PRIVATE
-  /opt/homebrew/Cellar/secp256k1/0.8.0/lib
-  /opt/homebrew/lib
-)
-
 target_link_libraries(greedyfind PRIVATE
   ${FOUNDATION_FRAMEWORK}
   ${METAL_FRAMEWORK}
-  secp256k1
-  tomcrypt
+  ${SECP256K1_LIBRARY}
+  ${TOMCRYPT_LIBRARY}
 )
 
 # Embed the metallib via rpath so the executable can find it next to itself.
@@ -196,6 +221,7 @@ file(GLOB KAT_SRC
     target_include_directories("${KAT_NAME}" PRIVATE
       "${CMAKE_SOURCE_DIR}/host"
       "${CMAKE_SOURCE_DIR}/tests"
+      "${SECP256K1_INCLUDE_DIR}"
     )
     file(READ "${KAT_FILE}" HEAD_BYTES LIMIT 4096)
     string(FIND "${HEAD_BYTES}" "#import" HAS_OBJC)
@@ -206,21 +232,9 @@ file(GLOB KAT_SRC
       )
     endif()
     target_compile_options("${KAT_NAME}" PRIVATE ${GRD_WARN_FLAGS})
-    # Link against the third-party crypto libraries we use for the
-    # host reference. secp256k1 comes from Homebrew (v0.8.0).
-    # libtomcrypt comes from Homebrew. Override via environment if
-    # installed elsewhere.
-    target_include_directories("${KAT_NAME}" PRIVATE
-      /opt/homebrew/Cellar/secp256k1/0.8.0/include
-      /opt/homebrew/include
-    )
-    target_link_directories("${KAT_NAME}" PRIVATE
-      /opt/homebrew/Cellar/secp256k1/0.8.0/lib
-      /opt/homebrew/lib
-    )
     target_link_libraries("${KAT_NAME}" PRIVATE
-      secp256k1
-      tomcrypt
+      ${SECP256K1_LIBRARY}
+      ${TOMCRYPT_LIBRARY}
     )
     add_test(NAME "kat_${KAT_NAME}" COMMAND "${KAT_NAME}")
   endforeach()
@@ -240,15 +254,10 @@ if(GRD_BUILD_TOOLS)
   )
   target_include_directories(gen_pubkey PRIVATE
     "${CMAKE_SOURCE_DIR}/tools"
-    /opt/homebrew/Cellar/secp256k1/0.8.0/include
-    /opt/homebrew/include
+    "${SECP256K1_INCLUDE_DIR}"
   )
   target_compile_options(gen_pubkey PRIVATE ${GRD_WARN_FLAGS})
-  target_link_directories(gen_pubkey PRIVATE
-    /opt/homebrew/Cellar/secp256k1/0.8.0/lib
-    /opt/homebrew/lib
-  )
-  target_link_libraries(gen_pubkey PRIVATE secp256k1)
+  target_link_libraries(gen_pubkey PRIVATE ${SECP256K1_LIBRARY})
 endif()
 
 # ----------------------------------------------------------------------------
@@ -268,20 +277,13 @@ if(GRD_BUILD_BENCH)
       "${CMAKE_SOURCE_DIR}/host/sweep.m")
     target_include_directories("${BENCH_NAME}" PRIVATE
       "${CMAKE_SOURCE_DIR}/host"
-      /opt/homebrew/Cellar/secp256k1/0.8.0/include
-      /opt/homebrew/include
+      "${SECP256K1_INCLUDE_DIR}"
     )
     target_link_libraries("${BENCH_NAME}" PRIVATE
       ${FOUNDATION_FRAMEWORK}
       ${METAL_FRAMEWORK}
-    )
-    target_link_directories("${BENCH_NAME}" PRIVATE
-      /opt/homebrew/Cellar/secp256k1/0.8.0/lib
-      /opt/homebrew/lib
-    )
-    target_link_libraries("${BENCH_NAME}" PRIVATE
-      secp256k1
-      tomcrypt
+      ${SECP256K1_LIBRARY}
+      ${TOMCRYPT_LIBRARY}
     )
     target_compile_options("${BENCH_NAME}" PRIVATE ${GRD_WARN_FLAGS})
     add_dependencies("${BENCH_NAME}" greedy_metallib)
