@@ -291,3 +291,11 @@ endif()
 message(STATUS "Build type:      ${CMAKE_BUILD_TYPE}")
 message(STATUS "Host sources:    ${HOST_SRC}")
 message(STATUS "Metal sources:   ${METAL_SRC}")
+
+# ----------------------------------------------------------------------------
+# Install
+# ----------------------------------------------------------------------------
+include(GNUInstallDirs)
+install(TARGETS greedyfind RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(DIRECTORY docs DESTINATION ${CMAKE_INSTALL_DOCDIR})
