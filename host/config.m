@@ -181,7 +181,7 @@ GRDOptions *_Nullable GRDOptionsFromArgv(
       continue;
     }
     if (strcmp(a, "--version") == 0) {
-      printf("greedyfind v0.1.0\n");
+      printf("greedyfind v%s\n", GRD_VERSION);
       // Caller handles exit code; we just return a sentinel.
       GRDOptionsFree(opts);
       return NULL;
