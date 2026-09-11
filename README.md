@@ -1,5 +1,10 @@
 # greedyfind
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)](https://developer.apple.com/metal/)
+[![Metal 3.0](https://img.shields.io/badge/Metal-3.0-orange)](https://developer.apple.com/metal/)
+[![Xcode 16+](https://img.shields.io/badge/Xcode-16%2B-blue)](https://developer.apple.com/xcode/)
+
 > **Educational and research use only.** See [`DISCLAIMER.md`](DISCLAIMER.md)
 > and [`docs/security.md`](docs/security.md).
 
