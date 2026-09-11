@@ -848,14 +848,18 @@ static const uint32_t GRDMatchBufferSlots = 256;
                 [tmp addObject:[[GRDMatch alloc] initWithJ:j_lo variant:label]];
               }
               slice_matches = tmp;
+              // The completion must fire after every slice's appends
+              // have drained through merge_q. Fire the completion from
+              // merge_q itself when the last slice completes, so we
+              // can't observe a partial all_matches array.
+              uint32_t prev = atomic_fetch_add(&completed_count, 1u);
               dispatch_async(merge_q, ^{
                 [all_matches addObjectsFromArray:slice_matches];
-              });
-            }
-            uint32_t prev = atomic_fetch_add(&completed_count, 1u);
-            if (prev + 1 == total_slices) {
-              dispatch_async(self->_completion_queue, ^{
-                completion(all_matches, first_err);
+                if (prev + 1 == total_slices) {
+                  dispatch_async(self->_completion_queue, ^{
+                    completion(all_matches, first_err);
+                  });
+                }
               });
             }
           }];
