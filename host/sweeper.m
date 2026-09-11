@@ -56,7 +56,6 @@ static void grd_secp256k1_ignore_illegal(const char *message, void *data) {
 @property (nonatomic, strong) id<MTLBuffer> vgBuffer;        // V·G points, precomputed
 @property (nonatomic, strong) id<MTLBuffer> targetBuffer;
 @property (nonatomic, strong) id<MTLBuffer> bitmapBuffer;
-@property (nonatomic, strong) id<MTLBuffer> anchorsBuffer;
 @property (nonatomic, strong) id<MTLBuffer> matchBuffer;
 @property (nonatomic, strong) id<MTLBuffer> matchCountBuffer;
 @property (nonatomic, assign) uint64_t j_per_sec;  // last measured
@@ -421,30 +420,6 @@ static const uint32_t GRDMatchBufferSlots = 256;
   }
   memset([s.bitmapBuffer contents], 0, 64);
 
-  // Anchors buffer: full EC points (X, Y, Z) per anchor. Path C2:
-  // the host precomputes (from + i)·G for each i in [0, num_anchors)
-  // and uploads the points. The kernel reads anchor[j_idx] as a full
-  // EcPoint and computes candidate = anchor + V·G with one EC add.
-  //
-  // Allocation size: 96 bytes per point × per_slice anchors. The
-  // per-slice cap is 2^20 (set in executeWithCompletion), so the
-  // worst-case allocation is 96 × 2^20 ≈ 96 MiB — well within
-  // unified-memory limits on Apple Silicon.
-  s.anchorsBuffer = [dev newBufferWithLength:0x100000 * sizeof(GRDEcPoint)
-                                    options:MTLResourceStorageModeShared];
-  if (!s.anchorsBuffer) {
-    if (error) *error = [NSError errorWithDomain:GRDErrorDomain
-                                           code:GRDErrorBufferAllocationFailed
-                                       userInfo:nil];
-    return nil;
-  }
-  if (!s.anchorsBuffer) {
-    if (error) *error = [NSError errorWithDomain:GRDErrorDomain
-                                           code:GRDErrorBufferAllocationFailed
-                                       userInfo:nil];
-    return nil;
-  }
-
   // Match buffer: GRDMatchBufferSlots slots per device. With N devices,
   // the global match pool is N × GRDMatchBufferSlots.
   s.matchBuffer = [dev newBufferWithLength:GRDMatchBufferSlots * sizeof(GRDUInt256x64)
@@ -622,11 +597,12 @@ static const uint32_t GRDMatchBufferSlots = 256;
         // Reset the per-device match counter.
         *(uint32_t *)[dev_state.matchCountBuffer contents] = 0;
         // Per-device gpuAddress values for the constant pointers.
-        // The match_buffer / match_count / target / bitmap / anchors
-        // addresses are stable across slices, so we cache them here.
+        // The match_buffer / match_count / target / bitmap addresses are
+        // stable across slices, so we cache them here. The anchors
+        // pointer is per-slice (see anchor_staging below) and is patched
+        // into the args buffer inside the slice loop.
         uint64_t target_x_addr = [dev_state.targetBuffer gpuAddress];
         uint64_t bitmap_addr   = [dev_state.bitmapBuffer gpuAddress];
-        uint64_t anchors_addr  = [dev_state.anchorsBuffer gpuAddress];
         uint64_t vg_buf_addr   = [dev_state.vgBuffer gpuAddress];
         uint64_t match_buf_addr  = [dev_state.matchBuffer gpuAddress];
         uint64_t match_cnt_addr  = [dev_state.matchCountBuffer gpuAddress];
@@ -756,7 +732,7 @@ static const uint32_t GRDMatchBufferSlots = 256;
           uint32_t *ap32 = (uint32_t *)args_buf;
           ap64[0] = target_x_addr;   // offset  0
           ap64[1] = bitmap_addr;     // offset  8
-          ap64[2] = anchors_addr;    // offset 16
+          ap64[2] = [anchor_staging gpuAddress];  // offset 16
           ap32[6] = slice_num_anchors;  // offset 24
           ap64[4] = vg_buf_addr;     // offset 32
           ap64[5] = match_buf_addr;  // offset 40
@@ -792,18 +768,14 @@ static const uint32_t GRDMatchBufferSlots = 256;
           // computed anchors. The blit copy in the same command buffer
           // as the compute dispatch ensures ordering — no explicit
           // synchronise is needed.
-          id<MTLBlitCommandEncoder> blit = [sweep_cmd blitCommandEncoder];
-          [blit copyFromBuffer:anchor_staging
-                   sourceOffset:0
-                       toBuffer:dev_state.anchorsBuffer
-              destinationOffset:0
-                           size:slice_num_anchors * sizeof(GRDEcPoint)];
-          [blit endEncoding];
+          // Pass anchor_staging directly to the kernel; the v0.1 kernel
+          // doesn't read anchorsBuffer ("unused by C1"), so the per-slice
+          // staging buffer is enough — no device-wide 96 MiB pool needed.
           id<MTLComputeCommandEncoder> senc = [sweep_cmd computeCommandEncoder];
           [senc setComputePipelineState:dev_state.pipelineSweep];
           [senc setBuffer:sweep_args_buf offset:0 atIndex:0];
           [senc setBuffer:dev_state.variantsBuffer offset:0 atIndex:1];
-          [senc setBuffer:dev_state.anchorsBuffer offset:0 atIndex:2];
+          [senc setBuffer:anchor_staging offset:0 atIndex:2];
           [senc setBuffer:dev_state.vgBuffer offset:0 atIndex:3];
           [senc setBuffer:dev_state.matchBuffer offset:0 atIndex:4];
           [senc setBuffer:dev_state.matchCountBuffer offset:0 atIndex:5];
