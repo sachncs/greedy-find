@@ -61,13 +61,15 @@ KAT. Exits non-zero on the first failure.
 
 ```bash
 ./build/greedyfind \
-    --pubkey 0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798 \
+    --pubkey 02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5 \
     --from 0 --to 1000000
 ```
 
 This is a pubkey-mode sweep over the first million private keys
-with the target being `d=1`. The output should contain a `MATCH
-j=1+0` line.
+with the target being `d=2`. The smallest recoverable scalar in
+--pubkey mode is `d=2` (the variant table contains no `V=0`;
+`d=2` corresponds to `j=0, V=2, candidate = 0 + 2·G = 2·G`). The
+output should contain a `MATCH j=0+2` line.
 
 ## More
 
