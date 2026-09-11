@@ -8,6 +8,13 @@
 //
 // The host implementation mirrors `metal/secp256k1.metal` limb-for-limb
 // so differential testing against the GPU kernel is straightforward.
+//
+// macOS-only. The u128 helpers use the Clang/GCC `unsigned __int128`
+// extension. The toolchain already requires Apple Clang for the Metal
+// kernel build, so the constraint is no worse than the project's
+// existing macOS dependency; cross-platform portability would require
+// replacing `unsigned __int128` with a hand-coded 64x64->128 carry
+// chain (tracked but not implemented in v0.1).
 
 #include "ecc.h"
 
