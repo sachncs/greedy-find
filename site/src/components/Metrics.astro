@@ -1,0 +1,51 @@
+---
+const metrics = [
+  {
+    value: '512',
+    suffix: '/ j',
+    label: 'Variants tested',
+    detail: 'Powers of two mod n + cumulative sums, both signs.',
+  },
+  {
+    value: '×32',
+    label: 'Batch inversion',
+    detail: 'One inversion for 32 lanes via Montgomery\'s trick.',
+  },
+  {
+    value: '2⁶⁴',
+    label: 'Range ceiling',
+    detail: 'v0.1 refuses anything larger — explicit, not silent.',
+  },
+  {
+    value: 'M-series',
+    suffix: 'native',
+    label: 'Throughput target',
+    detail: 'Metal 3.0 compute, designed for Apple Silicon.',
+  },
+];
+---
+<section class="section metrics" aria-label="At a glance">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">At a glance</span>
+      <h2>The numbers behind the sweep.</h2>
+      <p>
+        The hard parts are not the math, they're the plumbing. Here's how the v0.1 pipeline
+        expresses itself in numbers.
+      </p>
+    </div>
+
+    <div class="metrics__grid">
+      {metrics.map((m, i) => (
+        <article class="metric reveal" data-delay={String(((i % 4) + 1))}>
+          <div class="metric__value">
+            <span>{m.value}</span>
+            {m.suffix && <span class="metric__suffix">{m.suffix}</span>}
+          </div>
+          <div class="metric__label">{m.label}</div>
+          <p class="metric__detail">{m.detail}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>

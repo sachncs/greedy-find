@@ -4,6 +4,11 @@ build/
 *.metallib
 build-*/
 
+# Site (Astro build output + node_modules)
+site/dist/
+site/node_modules/
+site/.astro/
+
 # CMake
 CMakeCache.txt
 CMakeFiles/

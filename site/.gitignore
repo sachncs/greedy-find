@@ -1,0 +1,11 @@
+# Build artifacts
+dist/
+.astro/
+node_modules/
+.DS_Store
+*.log
+
+# Local overrides
+.env
+.env.*
+!.env.example

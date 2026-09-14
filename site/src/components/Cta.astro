@@ -1,0 +1,59 @@
+---
+import ArrowRight from './icons/ArrowRight.astro';
+---
+<section class="cta" id="install" aria-labelledby="cta-title">
+  <div class="aurora" aria-hidden="true">
+    <div class="aurora__beam"></div>
+    <div class="aurora__beam"></div>
+  </div>
+  <div class="container cta__inner reveal">
+    <span class="eyebrow" style="justify-content: center;">Get started</span>
+    <h2 id="cta-title">Build it in two commands.<br />Run a sweep in five.</h2>
+    <p>
+      CMake configures the host, the Metal kernels, the tests, and the bench harness in one pass.
+      The smoke script asserts both modes. The KATs run on every commit.
+    </p>
+
+    <div class="cta__actions">
+      <a
+        class="btn btn--accent btn--lg"
+        href="https://github.com/sachncs/greedy-find#quick-start"
+        target="_blank"
+        rel="noopener"
+      >
+        Read the quick start <ArrowRight class="icon icon--sm" />
+      </a>
+      <a
+        class="btn btn--ghost btn--lg"
+        href="https://github.com/sachncs/greedy-find/blob/main/docs/algorithms.md"
+        target="_blank"
+        rel="noopener"
+      >
+        Algorithm deep dive
+      </a>
+    </div>
+
+    <div
+      style="
+        margin-top: var(--space-7);
+        padding: var(--space-4) var(--space-5);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        background: var(--bg-elevated);
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+        color: var(--text-muted);
+        text-align: left;
+        max-width: 640px;
+        margin-inline: auto;
+        line-height: 1.9;
+      "
+    >
+      <span style="color: var(--text-faint);"># build</span><br />
+      <span style="color: var(--text);">cmake -S . -B build</span><br />
+      <span style="color: var(--text);">cmake --build build -j</span><br />
+      <span style="color: var(--text-faint);"># smoke test (both modes)</span><br />
+      <span style="color: var(--text);">bash examples/run.sh</span>
+    </div>
+  </div>
+</section>

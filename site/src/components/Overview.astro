@@ -1,0 +1,98 @@
+---
+import Check from './icons/Check.astro';
+---
+<section class="section overview" id="overview" aria-labelledby="overview-title">
+  <div class="container">
+    <div class="overview__grid">
+      <div class="overview__copy reveal">
+        <span class="eyebrow">Product overview</span>
+        <h2 id="overview-title">
+          A research-grade GPU sweep<br />that thinks in ranges, not keys.
+        </h2>
+        <p>
+          Most keyspace tools either brute-force the impossible 2²⁵⁶ or take shortcuts that break
+          the math. <strong>greedy-find</strong> sits in a third place: it searches a known,
+          bounded range — like a Bitcoin Puzzle slice — and uses Metal compute to test millions
+          of candidate scalars per second against a compressed public-key or P2PKH address.
+        </p>
+        <p>
+          Every step is observable. Variant tables, anchor chains, the prune bitmap, and the
+          atomic match buffer are first-class outputs, not implementation details — so a
+          researcher can verify what ran, why it matched, and what the host saw.
+        </p>
+
+        <ul class="overview__list" role="list">
+          <li class="overview__list-item">
+            <Check class="icon" />
+            <span><strong>Bounded-range sweep.</strong> Pass <code>--from</code> and <code>--to</code>, the GPU walks every j in [from, to).</span>
+          </li>
+          <li class="overview__list-item">
+            <Check class="icon" />
+            <span><strong>Two target modes.</strong> Compressed SEC1 pubkey (X-coordinate) or P2PKH mainnet address (hash160).</span>
+          </li>
+          <li class="overview__list-item">
+            <Check class="icon" />
+            <span><strong>Multi-variant splitting.</strong> 512 candidate offsets per j — both signs, powers-of-two and cumulative.</span>
+          </li>
+          <li class="overview__list-item">
+            <Check class="icon" />
+            <span><strong>Resumable sessions.</strong> SHA-256-verified checkpoints, NDJSON telemetry, deterministic replay.</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="overview__visual reveal" data-delay="2" aria-hidden="true">
+        <div class="diagram">
+          <div class="diagram__row">
+            <div class="diagram__card">
+              <span class="diagram__card-title">Target</span>
+              <span class="diagram__card-body">
+                Compressed SEC1 pubkey or P2PKH mainnet address. Parsed and validated host-side
+                before any GPU dispatch.
+              </span>
+            </div>
+            <div class="diagram__card">
+              <span class="diagram__card-title">Range</span>
+              <span class="diagram__card-body">
+                Arbitrary <code>[from, to)</code> integer range. v0.1 supports up to 2⁶⁴; the CLI
+                rejects anything larger with a clear error.
+              </span>
+            </div>
+          </div>
+
+          <div class="diagram__arrow">↧</div>
+
+          <div class="diagram__row">
+            <div class="diagram__card">
+              <span class="diagram__card-title">Variant table</span>
+              <span class="diagram__card-body">
+                512 × GRDVariant, computed once per device. Powers of two mod n plus cumulative
+                sums, both signs.
+              </span>
+            </div>
+            <div class="diagram__card">
+              <span class="diagram__card-title">Anchor table</span>
+              <span class="diagram__card-body">
+                Projective points every 2ᵏ threadgroups. Lets each lane amortise its EC-add chain
+                across the batch.
+              </span>
+            </div>
+          </div>
+
+          <div class="diagram__arrow">↧</div>
+
+          <div class="diagram__row">
+            <div class="diagram__card" style="grid-column: 1 / -1;">
+              <span class="diagram__card-title">GPU sweep → atomic match buffer</span>
+              <span class="diagram__card-body">
+                Per-threadgroup <code>grdSweepPubkey</code> dispatch — batch inversion, EC add,
+                X-coordinate compare, optional hash160. Matches land in a small atomic buffer
+                per device.
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,52 @@
+---
+---
+<section class="section cli" id="cli" aria-labelledby="cli-title">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">Command line</span>
+      <h2 id="cli-title">One command,<br />a bounded sweep.</h2>
+      <p>
+        Build it once, then point it at a target. The CLI is honest about what it can and can't do —
+        signed inputs are refused, out-of-range values are refused, address-mode GPU is gated behind
+        a clear "lands in A40+" message.
+      </p>
+    </div>
+
+    <div class="cli__panel reveal" data-cli>
+      <div class="cli__head">
+        <div class="cli__title">zsh — greedyfind session</div>
+        <div class="cli__tabs" role="tablist">
+          <button class="cli__tab is-active" data-cli-tab="pubkey" role="tab" aria-selected="true">--pubkey</button>
+          <button class="cli__tab" data-cli-tab="address" role="tab" aria-selected="false">--address</button>
+          <button class="cli__tab" data-cli-tab="resume" role="tab" aria-selected="false">--resume</button>
+        </div>
+      </div>
+      <div class="cli__body">
+        <div class="cli__stream" data-cli-stream></div>
+        <div class="cli__bar" aria-hidden="true">
+          <div class="cli__bar-fill"></div>
+        </div>
+        <div class="cli__legend" aria-hidden="true">
+          <span><span class="cli__legend-dot" style="background: var(--accent);"></span> prompt</span>
+          <span><span class="cli__legend-dot" style="background: var(--text-muted);"></span> info</span>
+          <span><span class="cli__legend-dot" style="background: var(--success);"></span> match</span>
+          <span><span class="cli__legend-dot" style="background: var(--highlight);"></span> notice</span>
+          <span><span class="cli__legend-dot" style="background: var(--text-faint);"></span> metadata</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="banner reveal" data-delay="2">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 9v4M12 17h.01" />
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      </svg>
+      <span>
+        Educational and research use only. <code>greedy-find</code> searches a bounded, known range
+        — it is not a wallet, signer, or keyspace scanner. See
+        <a href="https://github.com/sachncs/greedy-find/blob/main/DISCLAIMER.md" target="_blank" rel="noopener" style="color: var(--accent);">DISCLAIMER.md</a>
+        and the security threat model before use.
+      </span>
+    </div>
+  </div>
+</section>

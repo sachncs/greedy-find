@@ -102,6 +102,21 @@ output should contain a `MATCH j=0+2` line.
 - [plan.md](plan.md) — the 54-unit atomic implementation plan and
   per-unit quality gates.
 
+## Site
+
+The product landing page lives under [`site/`](site/) (Astro 4, TypeScript,
+hand-rolled CSS). It is built by `.github/workflows/pages.yml` and published
+to GitHub Pages on every push to `main`. Locally:
+
+```bash
+cd site
+npm install
+npm run dev      # http://localhost:4321/greedy-find
+npm run build    # → site/dist/
+```
+
+See [site/README.md](site/README.md) for the full layout.
+
 ## Architecture (at a glance)
 
 ```

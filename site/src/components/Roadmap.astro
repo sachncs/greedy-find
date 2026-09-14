@@ -1,0 +1,107 @@
+---
+const shipped = [
+  {
+    title: 'pubkey-mode GPU sweep',
+    body: 'SEC1 X-coordinate sweep over an arbitrary [from, to) range on Apple Silicon via Metal.',
+  },
+  {
+    title: 'Host-side reference math',
+    body: 'Field/point arithmetic in host/ecc.c — used by the KAT suite as the canonical oracle.',
+  },
+  {
+    title: 'KAT suite',
+    body: 'Field ops, hash160, base58check decode, address parsing, variant generation, load balance, telemetry, checkpointing.',
+  },
+  {
+    title: 'Reliability + differential',
+    body: 'scripts/reliability.sh runs the matrix; scripts/differential.sh cross-checks against the `find` Rust crate.',
+  },
+];
+
+const progress = [
+  {
+    title: 'Address-mode GPU sweep',
+    body: 'Stub returns "A40+" — full hash160 path is the current A40 unit; gated on a ≥5% bench win.',
+  },
+  {
+    title: 'Cache layer',
+    body: 'GRDCache plumbing exists; integration with the sweep pipeline is on the roadmap.',
+  },
+  {
+    title: 'Simdgroup batch inversion',
+    body: 'A40 simdgroup variant — faster affine back-conversion, measured against the unoptimised baseline.',
+  },
+];
+
+const future = [
+  {
+    title: 'u128 ranges > 2⁶⁴',
+    body: 'v0.1 decodes only the low 64 bits of j. Full u128 decode is queued behind address-mode.',
+  },
+  {
+    title: 'P2SH addresses (0x05)',
+    body: 'Rejected in v0.1 with a clear error. Lands alongside address-mode.',
+  },
+  {
+    title: 'Distributed slicing',
+    body: 'Cooperative multi-host sweeps with per-slice NDJSON merge — already informally supported via checkpoints.',
+  },
+  {
+    title: 'Throughput optimisations',
+    body: 'A40–A44 batch features are individually gated; each ships only if it earns its bench.',
+  },
+];
+---
+<section class="section roadmap" id="roadmap" aria-labelledby="roadmap-title">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">Status</span>
+      <h2 id="roadmap-title">Honest progress,<br />measured by benchmarks.</h2>
+      <p>
+        No version numbers, no marketing-roadmap shapes. Each feature ships behind a KAT, a
+        differential test, or a ≥5% bench gain over the unoptimised baseline.
+      </p>
+    </div>
+
+    <div class="roadmap__grid">
+      <div class="roadmap__col is-shipped reveal">
+        <div class="roadmap__col-head">
+          <span>Shipped · v0.1</span>
+          <span class="pill">live</span>
+        </div>
+        {shipped.map((item) => (
+          <div class="roadmap__item">
+            <span class="roadmap__item-mark"></span>
+            <span><strong>{item.title}</strong><br />{item.body}</span>
+          </div>
+        ))}
+      </div>
+
+      <div class="roadmap__col is-progress reveal" data-delay="2">
+        <div class="roadmap__col-head">
+          <span>In progress</span>
+          <span class="pill">A40+</span>
+        </div>
+        {progress.map((item) => (
+          <div class="roadmap__item">
+            <span class="roadmap__item-mark"></span>
+            <span><strong>{item.title}</strong><br />{item.body}</span>
+          </div>
+        ))}
+      </div>
+
+      <div class="roadmap__col is-future reveal" data-delay="3">
+        <div class="roadmap__col-head">
+          <span>Roadmap</span>
+          <span class="pill">queued</span>
+        </div>
+        {future.map((item) => (
+          <div class="roadmap__item">
+            <span class="roadmap__item-mark"></span>
+            <span><strong>{item.title}</strong><br />{item.body}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>

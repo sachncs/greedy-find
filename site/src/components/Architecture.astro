@@ -1,0 +1,90 @@
+---
+import Check from './icons/Check.astro';
+---
+<section class="section arch" id="architecture" aria-labelledby="arch-title">
+  <div class="container">
+    <div class="arch__inner">
+      <div class="arch__copy reveal">
+        <span class="eyebrow">Architecture</span>
+        <h2 id="arch-title">
+          A small, honest pipeline<br />from argv to atomic match.
+        </h2>
+        <p>
+          The host owns parsing, the variant table, the anchor table, dispatch, and recovery.
+          The device owns the inner loop. No magic, no hidden state, no surprises — every buffer is
+          observable, every dispatch is reproducible.
+        </p>
+        <p>
+          <strong style="color: var(--text); font-weight: 500">GRDRunSession</strong> parses argv
+          into a <code>GRDOptions</code> struct and dispatches to a mode-specific sweeper.
+          Variants are precomputed once per device using libsecp256k1. The sweep kernel does
+          per-lane scalar muls and EC adds; matches are written to a small atomic match buffer
+          per device.
+        </p>
+
+        <div class="arch__metrics">
+          <div class="arch__metric">
+            <div class="arch__metric-value">512</div>
+            <div class="arch__metric-label">variants / j</div>
+          </div>
+          <div class="arch__metric">
+            <div class="arch__metric-value">×32</div>
+            <div class="arch__metric-label">batch inversion</div>
+          </div>
+          <div class="arch__metric">
+            <div class="arch__metric-value">2⁶⁴</div>
+            <div class="arch__metric-label">range ceiling</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="arch__visual reveal" data-delay="2" aria-hidden="true">
+        <div class="arch__title">
+          <span>Host → Device</span>
+          <span>v0.1</span>
+        </div>
+        <div class="arch__pipeline">
+          <div class="arch__step">
+            <span class="arch__step-num">1</span>
+            <span class="arch__step-label">argv → GRDOptions</span>
+            <span class="arch__step-tag">host/config.m</span>
+          </div>
+          <div class="arch__step">
+            <span class="arch__step-num">2</span>
+            <span class="arch__step-label">build variant table (512)</span>
+            <span class="arch__step-tag">libsecp256k1</span>
+          </div>
+          <div class="arch__step">
+            <span class="arch__step-num">3</span>
+            <span class="arch__step-label">build anchor table</span>
+            <span class="arch__step-tag">host/sweeper.m</span>
+          </div>
+          <div class="arch__step">
+            <span class="arch__step-num">4</span>
+            <span class="arch__step-label">upload prune bitmap</span>
+            <span class="arch__step-tag">grdVariantPrune</span>
+          </div>
+          <div class="arch__step">
+            <span class="arch__step-num">5</span>
+            <span class="arch__step-label">dispatch sweep kernel</span>
+            <span class="arch__step-tag">grdSweepPubkey</span>
+          </div>
+          <div class="arch__step">
+            <span class="arch__step-num">6</span>
+            <span class="arch__step-label">recover matches</span>
+            <span class="arch__step-tag">atomic buf</span>
+          </div>
+          <div class="arch__step">
+            <span class="arch__step-num">7</span>
+            <span class="arch__step-label">emit telemetry + checkpoint</span>
+            <span class="arch__step-tag">events.ndjson</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap: var(--space-2); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-subtle); padding-top: var(--space-3); border-top: 1px solid var(--border);">
+          <Check class="icon icon--sm" />
+          <span>KAT suite + differential test against `find` Rust crate</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

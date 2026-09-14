@@ -1,0 +1,35 @@
+---
+interface Props {
+  size?: number;
+  class?: string;
+}
+const { size = 28, class: className = '' } = Astro.props;
+---
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width={size}
+  height={size}
+  viewBox="0 0 64 64"
+  fill="none"
+  class={className}
+  aria-hidden="true"
+>
+  <defs>
+    <linearGradient id="gfg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#9ec3ff" />
+      <stop offset="55%" stop-color="#6ea8ff" />
+      <stop offset="100%" stop-color="#aa82ff" />
+    </linearGradient>
+    <linearGradient id="gfg-soft" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.4)" />
+      <stop offset="100%" stop-color="rgba(255,255,255,0)" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#gfg)" />
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#gfg-soft)" />
+  <path
+    d="M44 32c0 6.6-5.4 12-12 12s-12-5.4-12-12 5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l-3.4 3.4A7 7 0 1 0 38 32h-6v-4h12z"
+    fill="#0a0a0c"
+    opacity="0.95"
+  />
+</svg>

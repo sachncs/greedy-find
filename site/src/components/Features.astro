@@ -1,0 +1,96 @@
+---
+import Cpu from './icons/Cpu.astro';
+import Bolt from './icons/Bolt.astro';
+import Layers from './icons/Layers.astro';
+import Shield from './icons/Shield.astro';
+import Trend from './icons/Trend.astro';
+import Resume from './icons/Resume.astro';
+import Atomic from './icons/Atomic.astro';
+import Docs from './icons/Docs.astro';
+import Rays from './icons/Rays.astro';
+
+const features = [
+  {
+    icon: Cpu,
+    tag: '01 · engine',
+    title: 'Metal 3.0 compute',
+    body: 'Native compute kernels for Apple Silicon — variant pruning, the sweep itself, and a simdgroup-flavoured batch inversion for the affine back-conversion.',
+  },
+  {
+    icon: Bolt,
+    tag: '02 · throughput',
+    title: 'M-series throughput',
+    body: '32-lane threadgroups, batched EC-add chains, anchor-table precomputation — measured in millions of keys per second on M-series hardware.',
+  },
+  {
+    icon: Layers,
+    tag: '03 · variants',
+    title: '512-variant splitting',
+    body: 'Both signs of every power of two mod n, plus the cumulative sums. Every j is tested against 512 candidate offsets before the kernel moves on.',
+  },
+  {
+    icon: Atomic,
+    tag: '04 · match buffer',
+    title: 'Atomic match recovery',
+    body: 'A small per-device atomic match buffer — matches are written once, recovered once, and never silently lost. A simdgroup variant is gated on a ≥5% bench win.',
+  },
+  {
+    icon: Resume,
+    tag: '05 · durability',
+    title: 'Resumable sessions',
+    body: 'Periodic checkpoints with SHA-256 integrity hash. On `--resume`, the host verifies the file and reattaches the sweep from the saved position.',
+  },
+  {
+    icon: Shield,
+    tag: '06 · safety',
+    title: 'Bounded by design',
+    body: 'Research-grade. v0.1 refuses P2SH, refuses ranges > 2⁶⁴, refuses signed inputs. The threat model is documented in `docs/security.md`.',
+  },
+  {
+    icon: Trend,
+    tag: '07 · telemetry',
+    title: 'NDJSON events',
+    body: 'One event per line: slice start/end, match, telemetry. Stream the file into anything that reads NDJSON, or open it in your editor.',
+  },
+  {
+    icon: Docs,
+    tag: '08 · readable',
+    title: 'First-class docs',
+    body: 'Algorithm, architecture, CLI, configuration, and security docs all live alongside the source — short, exact, no marketing fluff.',
+  },
+  {
+    icon: Rays,
+    tag: '09 · open',
+    title: 'Open by default',
+    body: 'MIT licensed. KAT-tested on every commit. Differential-tested against the CPU Rust `find` crate so the math stays portable.',
+  },
+];
+---
+<section class="section features" id="features" aria-labelledby="features-title">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">What you get</span>
+      <h2 id="features-title">Nine things it does<br />that other keyspace tools don't.</h2>
+      <p>
+        A focused surface, not a kitchen sink. Each feature exists because someone needed it
+        during a real sweep — and ships behind a flag, a KAT, or a benchmark gate.
+      </p>
+    </div>
+
+    <div class="features__grid">
+      {features.map((f, i) => {
+        const Icon = f.icon;
+        return (
+          <article class="feature reveal" data-delay={String(((i % 3) + 1))}>
+            <div class="feature__icon">
+              <Icon class="icon icon--lg" />
+            </div>
+            <span class="feature__tag">{f.tag}</span>
+            <h3 class="feature__title">{f.title}</h3>
+            <p class="feature__body">{f.body}</p>
+          </article>
+        );
+      })}
+    </div>
+  </div>
+</section>

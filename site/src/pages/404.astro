@@ -1,0 +1,25 @@
+---
+import Base from '../layouts/Base.astro';
+import ArrowRight from '../components/icons/ArrowRight.astro';
+---
+<Base title="greedy-find — page not found">
+  <main id="main" style="min-height: 100vh; display: grid; place-items: center; padding: 4rem 1.5rem;">
+    <div style="max-width: 560px; text-align: center; display: grid; gap: 1.5rem;">
+      <span class="eyebrow" style="justify-content: center;">404 · off the curve</span>
+      <h1 style="font-size: clamp(2.5rem, 6vw, 4rem); line-height: 1.05; letter-spacing: -0.04em; font-weight: 600;">
+        Not on this <em class="gradient-text">range</em>.
+      </h1>
+      <p style="color: var(--text-muted); font-size: var(--fs-lg); line-height: var(--lh-relaxed);">
+        The page you tried isn't part of the site. The research tool is fine — the link wasn't.
+      </p>
+      <div style="display: inline-flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; margin-top: 0.5rem;">
+        <a class="btn btn--accent btn--lg" href={`${import.meta.env.BASE_URL.replace(/\/?$/, '/')}`}>
+          Back to home <ArrowRight class="icon icon--sm" />
+        </a>
+        <a class="btn btn--ghost btn--lg" href="https://github.com/sachncs/greedy-find" target="_blank" rel="noopener">
+          Open repository
+        </a>
+      </div>
+    </div>
+  </main>
+</Base>

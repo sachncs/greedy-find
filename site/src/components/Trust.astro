@@ -1,0 +1,27 @@
+---
+const items = [
+  { label: 'Apple Silicon', tone: 'accent' },
+  { label: 'macOS 14+', tone: 'neutral' },
+  { label: 'Metal 3.0', tone: 'neutral' },
+  { label: 'Xcode 16+', tone: 'neutral' },
+  { label: 'secp256k1', tone: 'neutral' },
+  { label: 'MIT licensed', tone: 'neutral' },
+];
+---
+<section class="trust" aria-label="Toolchain">
+  <div class="container trust__grid">
+    <span class="trust__label">Built for</span>
+    <div class="trust__items">
+      {items.map((i) => (
+        <span class="trust__chip">
+          <span class={`trust__chip-dot`} style={i.tone === 'accent' ? '' : 'background: var(--text-faint); box-shadow: none;'}></span>
+          {i.label}
+        </span>
+      ))}
+    </div>
+    <div class="trust__stat">
+      <span style="color: var(--text); font-weight: 500;">v0.1.0</span>
+      <span>· 2026 release</span>
+    </div>
+  </div>
+</section>

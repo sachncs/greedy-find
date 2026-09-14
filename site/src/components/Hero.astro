@@ -1,0 +1,135 @@
+---
+import ArrowRight from './icons/ArrowRight.astro';
+import Sparkle from './icons/Sparkle.astro';
+---
+<section class="hero" aria-labelledby="hero-title">
+  <div class="aurora" aria-hidden="true">
+    <div class="aurora__beam"></div>
+    <div class="aurora__beam"></div>
+    <div class="aurora__beam"></div>
+  </div>
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <div class="container hero__inner">
+    <div class="hero__copy reveal">
+      <span class="eyebrow hero__eyebrow">
+        <Sparkle size={14} class="icon icon--sm" /> v0.1 · research preview
+      </span>
+      <h1 id="hero-title" class="hero__title">
+        GPU-accelerated<br />
+        <em>secp256k1</em> key discovery,<br />
+        on Apple Silicon.
+      </h1>
+      <p class="hero__sub">
+        <strong style="color: var(--text); font-weight: 500">greedy-find</strong> is a research-grade
+        Metal pipeline that searches a bounded, known range of secp256k1 private keys for one whose
+        public key or address matches a target. Multi-variant range-splitting, batch inversion, and
+        an atomic match buffer — designed for native M-series performance.
+      </p>
+
+      <div class="hero__ctas">
+        <a class="btn btn--accent btn--lg" href="#install">
+          Build it <ArrowRight class="icon icon--sm" />
+        </a>
+        <a class="btn btn--ghost btn--lg" href="#cli">See it run</a>
+      </div>
+
+      <div class="hero__meta">
+        <span class="hero__meta-item"><span class="hero__meta-dot"></span> Apple Silicon</span>
+        <span class="hero__meta-item">macOS 14+</span>
+        <span class="hero__meta-item">Metal 3.0</span>
+        <span class="hero__meta-item">Xcode 16+</span>
+        <span class="hero__meta-item">MIT licensed</span>
+      </div>
+    </div>
+
+    <div class="hero__visual reveal" data-delay="2">
+      <div class="hero__panel" aria-hidden="true">
+        <div class="panel__chrome">
+          <div class="panel__dots"><span></span><span></span><span></span></div>
+          <div class="panel__title">greedyfind — host pipeline</div>
+          <div class="panel__title">src/host/sweep.m</div>
+        </div>
+        <div class="panel__body">
+          <aside class="panel__nav" aria-hidden="true">
+            <ul class="panel__nav-list">
+              <li class="is-active">argv parse</li>
+              <li>variant table</li>
+              <li>anchor table</li>
+              <li>device dispatch</li>
+              <li>match recovery</li>
+              <li>telemetry</li>
+              <li>checkpoint</li>
+            </ul>
+          </aside>
+          <div class="panel__editor">
+            <div class="panel__line">
+              <span class="panel__gutter">01</span>
+              <span class="panel__code"><span class="tok-cmt">// host/sweep.m — entry point for the GPU sweep</span></span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">02</span>
+              <span class="panel__code"><span class="tok-key">int</span> <span class="tok-fn">GRDRunSession</span>(<span class="tok-key">const</span> <span class="tok-punct">GRDOptions *</span>opts) {</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">03</span>
+              <span class="panel__code">  <span class="tok-key">GRDSweeper *</span>sw <span class="tok-punct">=</span> <span class="tok-fn">GRDSweeperFactory</span>(opts<span class="tok-punct">-&gt;</span>mode);</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">04</span>
+              <span class="panel__code">  <span class="tok-key">const</span> <span class="tok-key">char</span> <span class="tok-punct">*</span>err <span class="tok-punct">=</span> sw<span class="tok-punct">-&gt;</span><span class="tok-fn">setup</span>(opts);</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">05</span>
+              <span class="panel__code">  <span class="tok-key">if</span> (err) <span class="tok-fn">grd_fail</span>(err);</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">06</span>
+              <span class="panel__code"></span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">07</span>
+              <span class="panel__code">  <span class="tok-key">GRDMatchBuffer</span> <span class="tok-punct">{</span> matches <span class="tok-punct">=</span> {<span class="tok-num">0</span>};</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">08</span>
+              <span class="panel__code">  <span class="tok-key">uint64_t</span> j0 <span class="tok-punct">=</span> opts<span class="tok-punct">-&gt;</span>from;</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">09</span>
+              <span class="panel__code">  <span class="tok-key">while</span> (j0 <span class="tok-punct">&lt;</span> opts<span class="tok-punct">-&gt;</span>to) {</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">10</span>
+              <span class="panel__code">    sw<span class="tok-punct">-&gt;</span><span class="tok-fn">dispatch_slice</span>(j0, <span class="tok-num">1</span> <span class="tok-punct">&lt;&lt;</span> <span class="tok-num">20</span>, <span class="tok-punct">&amp;</span>matches);</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">11</span>
+              <span class="panel__code">    <span class="tok-fn">grd_telemetry_emit</span>(<span class="tok-str">"events.ndjson"</span>, j0, matches);</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">12</span>
+              <span class="panel__code">    <span class="tok-fn">grd_checkpoint_save</span>(j0);</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">13</span>
+              <span class="panel__code">    j0 <span class="tok-punct">+=</span> <span class="tok-num">1</span> <span class="tok-punct">&lt;&lt;</span> <span class="tok-num">20</span>;</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">14</span>
+              <span class="panel__code">  }</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">15</span>
+              <span class="panel__code">  <span class="tok-fn">printf</span>(<span class="tok-str">"MATCH"</span> matches);</span>
+            </div>
+            <div class="panel__line">
+              <span class="panel__gutter">16</span>
+              <span class="panel__code">}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
